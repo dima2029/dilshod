@@ -1,4 +1,4 @@
-<!<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
@@ -8,17 +8,21 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
-            --primary: #FF6B35;
-            --success: #27ae60;
-            --danger: #e74c3c;
-            --bg-dark: #1a1a2e;
-            --text: #2d3436;
-            --text-light: #636e72;
-            --border: #dfe6e9;
+            --primary: #4f46e5;
+            --primary-light: #eef2ff;
+            --primary-dark: #1e1b4b;
+            --success: #22c55e;
+            --danger: #ef4444;
+            --warning: #f97316;
+            --text: #1e1b4b;
+            --text-muted: #888;
+            --border: #e8e8f0;
+            --bg: #f0f2f8;
+            --white: #ffffff;
         }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            background: var(--bg);
             min-height: 100vh;
             color: var(--text);
             overflow-x: hidden;
@@ -30,7 +34,7 @@
             justify-content: center;
             align-items: center;
             min-height: 100vh;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #1e1b4b 0%, #4f46e5 100%);
         }
         .login-box {
             background: white;
@@ -41,111 +45,305 @@
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
             text-align: center;
         }
-        .login-box .logo { font-size: 3rem; margin-bottom: 0.5rem; }
-        .login-box h2 { color: #667eea; font-size: 1.3rem; margin-bottom: 0.3rem; }
-        .login-box p { color: #636e72; font-size: 0.85rem; margin-bottom: 1.5rem; }
+        .login-logo {
+            width: 64px; height: 64px;
+            background: var(--primary-dark);
+            border-radius: 16px;
+            display: flex; align-items: center; justify-content: center;
+            margin: 0 auto 1rem;
+            font-size: 2rem;
+        }
+        .login-box h2 { color: var(--primary-dark); font-size: 1.3rem; margin-bottom: 0.3rem; font-weight: 600; }
+        .login-box p { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1.5rem; }
         .login-box input {
             width: 100%;
             padding: 0.9rem 1rem;
-            border: 2px solid #dfe6e9;
+            border: 2px solid var(--border);
             border-radius: 10px;
-            font-size: 1.1rem;
+            font-size: 1rem;
             text-align: center;
             margin-bottom: 1rem;
             transition: border-color 0.2s;
+            letter-spacing: 2px;
         }
-        .login-box input:focus { outline: none; border-color: #667eea; }
+        .login-box input:focus { outline: none; border-color: var(--primary); }
         .login-btn {
             width: 100%;
             padding: 0.9rem;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--primary-dark);
             color: white;
             border: none;
             border-radius: 10px;
             font-size: 1rem;
-            font-weight: 700;
+            font-weight: 600;
             cursor: pointer;
         }
-        .login-error { color: #e74c3c; font-size: 0.85rem; margin-top: 0.75rem; display: none; }
+        .login-btn:active { transform: scale(0.98); }
+        .login-error { color: var(--danger); font-size: 0.85rem; margin-top: 0.75rem; display: none; }
 
         #mainApp { display: none; }
 
+        /* HEADER */
         .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--primary-dark);
             color: white;
-            padding: 1.2rem 1rem;
-            text-align: center;
+            padding: 0.85rem 1.2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
             position: sticky;
             top: 0;
             z-index: 100;
-            box-shadow: 0 4px 20px rgba(102,126,234,0.4);
         }
-        .header h1 { font-size: 1.4rem; font-weight: 700; }
-        .header p { font-size: 0.8rem; opacity: 0.85; margin-top: 0.2rem; }
-        #syncDot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; margin-right: 5px; animation: pulse 2s infinite; }
+        .header-left { display: flex; align-items: center; gap: 10px; }
+        .header-icon {
+            width: 32px; height: 32px;
+            background: var(--primary);
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.1rem;
+        }
+        .header h1 { font-size: 1rem; font-weight: 600; color: #e0e0ff; }
+        .header-sync { font-size: 0.72rem; color: #7c7caa; display: flex; align-items: center; gap: 5px; }
+        #syncDot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #4ade80; animation: pulse 2s infinite; }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
 
-        .tabs { display: flex; padding: 0.4rem; background: rgba(255,255,255,0.95); border-bottom: 2px solid rgba(102,126,234,0.2); overflow-x: auto; position: sticky; top: 0; z-index: 99; gap: 0.2rem; }
-        .tab { flex: 0 0 auto; padding: 0.55rem 0.85rem; border: none; background: transparent; color: #636e72; cursor: pointer; font-weight: 600; font-size: 0.78rem; border-bottom: 3px solid transparent; border-radius: 6px 6px 0 0; white-space: nowrap; transition: all 0.2s; }
-        .tab.active { color: #667eea; border-bottom-color: #667eea; }
-        .tab:hover { background: rgba(102,126,234,0.08); }
+        /* TABS */
+        .tabs {
+            display: flex;
+            background: var(--white);
+            border-bottom: 1px solid var(--border);
+            overflow-x: auto;
+            position: sticky;
+            top: 54px;
+            z-index: 99;
+            padding: 0 0.5rem;
+        }
+        .tabs::-webkit-scrollbar { display: none; }
+        .tab {
+            flex: 0 0 auto;
+            padding: 0.7rem 1rem;
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.8rem;
+            border-bottom: 2px solid transparent;
+            white-space: nowrap;
+            transition: all 0.2s;
+        }
+        .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+        .tab:hover { background: var(--primary-light); color: var(--primary); }
 
-        .container { padding: 1rem; padding-bottom: 3rem; }
+        /* LAYOUT */
+        .page-body { display: flex; min-height: calc(100vh - 96px); }
+
+        /* SIDEBAR */
+        .sidebar {
+            width: 200px;
+            background: var(--white);
+            border-right: 1px solid var(--border);
+            padding: 1rem 0.75rem;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+        .sidebar-label { font-size: 0.68rem; font-weight: 600; color: #aaa; text-transform: uppercase; letter-spacing: 0.5px; padding: 0.5rem 0.5rem 0.25rem; margin-top: 0.5rem; }
+        .sidebar-item { display: flex; align-items: center; gap: 8px; padding: 0.55rem 0.75rem; border-radius: 8px; font-size: 0.82rem; color: #555; cursor: pointer; transition: all 0.15s; }
+        .sidebar-item:hover { background: var(--primary-light); color: var(--primary); }
+        .s-count { margin-left: auto; background: #f0f0f8; color: var(--text-muted); font-size: 0.7rem; padding: 2px 6px; border-radius: 10px; }
+        .sidebar-bottom { margin-top: auto; display: flex; flex-direction: column; gap: 6px; padding-top: 1rem; }
+        .sidebar-btn { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0.6rem; border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: var(--white); color: #555; transition: all 0.15s; }
+        .sidebar-btn:hover { background: var(--primary-light); color: var(--primary); border-color: #c7d2fe; }
+        .sidebar-btn.danger { color: var(--danger); border-color: #fecaca; }
+        .sidebar-btn.danger:hover { background: #fef2f2; }
+
+        /* MAIN */
+        .main { flex: 1; padding: 1.2rem; overflow: auto; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
 
-        .card { background: white; border-radius: 16px; padding: 1.2rem; margin-bottom: 1.2rem; box-shadow: 0 4px 20px rgba(0,0,0,0.07); border: 1px solid rgba(102,126,234,0.1); }
-        .card h2 { color: #667eea; margin-bottom: 1rem; font-size: 1.15rem; }
+        /* STAT CARDS */
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 1.2rem; }
+        .stat-card { background: var(--white); border-radius: 12px; padding: 1rem 1.1rem; border: 1px solid var(--border); }
+        .stat-card.accent { background: var(--primary-dark); border-color: var(--primary-dark); }
+        .stat-card .s-val { font-size: 1.8rem; font-weight: 600; color: var(--text); }
+        .stat-card.accent .s-val { color: #fff; }
+        .stat-card .s-lbl { font-size: 0.72rem; color: var(--text-muted); margin-top: 3px; }
+        .stat-card.accent .s-lbl { color: #a5b4fc; }
+        .s-val.warn { color: var(--warning); }
 
+        /* CARDS */
+        .card { background: var(--white); border-radius: 14px; padding: 1.2rem; margin-bottom: 1.2rem; border: 1px solid var(--border); }
+        .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+        .card-title { font-size: 1rem; font-weight: 600; color: var(--primary-dark); }
+        .card-actions { display: flex; gap: 6px; }
+
+        /* FORMS */
         .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 0.75rem; margin-bottom: 1rem; }
         .form-group { display: flex; flex-direction: column; }
-        .form-group label { font-weight: 600; margin-bottom: 0.4rem; font-size: 0.85rem; }
-        .form-group input, .form-group select { padding: 0.7rem; border: 1px solid #dfe6e9; border-radius: 8px; font-size: 16px; font-family: inherit; transition: border-color 0.2s; }
-        .form-group input:focus, .form-group select:focus { outline: none; border-color: #667eea; box-shadow: 0 0 0 3px rgba(102,126,234,0.15); }
+        .form-group label { font-weight: 600; margin-bottom: 0.4rem; font-size: 0.82rem; }
+        .form-group input, .form-group select { padding: 0.65rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-size: 15px; font-family: inherit; background: #fafafa; transition: border-color 0.2s; }
+        .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79,70,229,0.12); background: var(--white); }
 
-        .btn { padding: 0.75rem 1.2rem; border: none; border-radius: 10px; font-size: 0.95rem; font-weight: 600; cursor: pointer; width: 100%; min-height: 44px; transition: all 0.2s; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; box-shadow: 0 4px 12px rgba(102,126,234,0.3); }
+        /* BUTTONS */
+        .btn { padding: 0.7rem 1.2rem; border: none; border-radius: 9px; font-size: 0.9rem; font-weight: 600; cursor: pointer; width: 100%; min-height: 42px; transition: all 0.2s; background: var(--primary-dark); color: white; }
         .btn:active { transform: scale(0.98); }
-        .btn-green { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); box-shadow: 0 4px 12px rgba(79,172,254,0.3); }
-        .btn-red { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); box-shadow: 0 4px 12px rgba(245,87,108,0.3); }
+        .btn-success { background: #16a34a; }
+        .btn-danger { background: var(--danger); }
+        .btn-outline { background: var(--white); color: var(--primary); border: 1px solid #c7d2fe; width: auto; padding: 0.5rem 1rem; font-size: 0.8rem; }
+        .btn-outline:hover { background: var(--primary-light); }
+        .btn-outline.green { color: #16a34a; border-color: #bbf7d0; }
+        .btn-outline.green:hover { background: #f0fdf4; }
 
-        .info-box { background: rgba(79,172,254,0.1); border-left: 4px solid #4facfe; padding: 0.9rem; border-radius: 8px; margin-bottom: 1rem; color: #2c5aa0; font-size: 0.88rem; }
-        .success-box { background: rgba(39,174,96,0.1); border-left: 4px solid #27ae60; padding: 0.9rem; border-radius: 8px; margin-bottom: 1rem; color: #1a6b3a; font-size: 0.88rem; }
-        .error-box { background: rgba(245,87,108,0.1); border-left: 4px solid #f5576c; padding: 0.9rem; border-radius: 8px; margin-bottom: 1rem; color: #c62828; font-size: 0.88rem; }
+        /* INFO BOXES */
+        .info-box { background: #eff6ff; border-left: 3px solid #3b82f6; padding: 0.85rem; border-radius: 8px; margin-bottom: 1rem; color: #1e40af; font-size: 0.85rem; }
+        .success-box { background: #f0fdf4; border-left: 3px solid var(--success); padding: 0.85rem; border-radius: 8px; margin-bottom: 1rem; color: #166534; font-size: 0.85rem; }
+        .error-box { background: #fef2f2; border-left: 3px solid var(--danger); padding: 0.85rem; border-radius: 8px; margin-bottom: 1rem; color: #991b1b; font-size: 0.85rem; }
+        .warn-box { background: #fff7ed; border-left: 3px solid var(--warning); padding: 0.85rem; border-radius: 8px; margin-bottom: 1rem; color: #9a3412; font-size: 0.85rem; }
 
+        /* TABLE */
+        .table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
         table { width: 100%; border-collapse: collapse; }
-        table thead { background: #1a1a2e; color: white; }
-        table th { padding: 0.65rem 0.6rem; text-align: left; font-size: 0.78rem; }
-        table td { padding: 0.65rem 0.6rem; border-bottom: 1px solid #dfe6e9; font-size: 0.82rem; }
+        table thead { background: var(--primary-dark); }
+        table th { padding: 0.65rem 0.75rem; text-align: left; font-size: 0.75rem; font-weight: 600; color: #a5b4fc; }
+        table td { padding: 0.65rem 0.75rem; border-bottom: 1px solid #f0f0f8; font-size: 0.82rem; }
+        table tbody tr:last-child td { border-bottom: none; }
+        table tbody tr:hover { background: #fafafe; }
 
-        .action-btn { padding: 0.35rem 0.6rem; margin: 0.1rem; border: none; border-radius: 6px; cursor: pointer; font-size: 0.7rem; font-weight: 600; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; min-height: 28px; }
-        .action-btn.del { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+        /* ACTION BUTTONS */
+        .action-btn { padding: 0.3rem 0.55rem; margin: 0.1rem; border: none; border-radius: 6px; cursor: pointer; font-size: 0.7rem; font-weight: 600; min-height: 26px; transition: opacity 0.15s; }
+        .action-btn:active { opacity: 0.7; }
+        .action-btn.loc  { background: #f0fdf4; color: #16a34a; }
+        .action-btn.move { background: var(--primary-light); color: var(--primary); }
+        .action-btn.edit { background: #fdf4ff; color: #a855f7; }
+        .action-btn.del  { background: #fef2f2; color: var(--danger); }
 
-        .empty-state { text-align: center; padding: 2.5rem; color: #636e72; }
+        /* FILTER */
+        .filter-row { display: flex; gap: 6px; margin-bottom: 1rem; flex-wrap: wrap; }
+        .filter-chip { padding: 0.35rem 0.85rem; border-radius: 20px; font-size: 0.78rem; font-weight: 500; border: 1px solid var(--border); background: var(--white); color: var(--text-muted); cursor: pointer; transition: all 0.15s; }
+        .filter-chip.active { background: var(--primary-light); color: var(--primary); border-color: #c7d2fe; }
+
+        /* BADGES */
+        .no-loc { color: var(--warning); font-size: 0.75rem; }
+        .loc-badge { background: var(--primary-light); color: var(--primary); padding: 0.2rem 0.55rem; border-radius: 6px; font-size: 0.75rem; font-weight: 600; }
+
+        /* EMPTY */
+        .empty-state { text-align: center; padding: 2.5rem; color: var(--text-muted); }
         .empty-icon { font-size: 2.5rem; margin-bottom: 0.75rem; }
 
-        .grid-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px,1fr)); gap: 0.75rem; }
-        .stat-item { background: #1a1a2e; color: white; padding: 1rem; border-radius: 10px; text-align: center; }
-        .stat-label { font-size: 0.75rem; opacity: 0.75; margin-bottom: 0.3rem; }
-        .stat-val { font-size: 1.6rem; font-weight: 700; }
+        /* FOUND CARD */
+        .found-card { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 1rem 1.1rem; margin-top: 0.75rem; }
+        .found-card .f-article { font-size: 1.1rem; font-weight: 700; color: var(--primary-dark); }
+        .found-card .f-name { font-size: 0.85rem; color: #555; margin-top: 2px; }
+        .found-loc { display: inline-flex; align-items: center; gap: 6px; background: var(--primary-dark); color: #a5b4fc; padding: 0.45rem 0.85rem; border-radius: 8px; font-size: 0.82rem; font-weight: 600; margin-top: 0.75rem; }
 
-        .location-badge { background: linear-gradient(135deg, #FF6B35 0%, #FFB84D 100%); color: white; padding: 0.5rem 0.9rem; border-radius: 8px; font-weight: 600; display: inline-block; margin-top: 0.5rem; font-size: 0.9rem; }
-
-        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; padding: 1rem; }
+        /* MODALS */
+        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000; justify-content: center; align-items: center; padding: 1rem; }
         .modal.open { display: flex; }
-        .modal-box { background: white; border-radius: 16px; padding: 1.8rem; width: 100%; max-width: 460px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
-        .modal-box h2 { color: #FF6B35; margin-bottom: 1.2rem; text-align: center; }
-        .wh-btn { width: 100%; padding: 1.1rem; border: 2px solid #dfe6e9; background: white; border-radius: 12px; cursor: pointer; text-align: left; margin-bottom: 0.75rem; transition: all 0.2s; }
-        .wh-btn:hover { border-color: #FF6B35; background: rgba(255,107,53,0.04); }
-        .wh-name { font-weight: 700; color: #FF6B35; }
-        .wh-desc { color: #636e72; font-size: 0.82rem; margin-top: 0.2rem; }
+        .modal-box { background: white; border-radius: 16px; padding: 1.8rem; width: 100%; max-width: 440px; box-shadow: 0 20px 60px rgba(0,0,0,0.25); }
+        .modal-box h2 { color: var(--primary-dark); margin-bottom: 1.2rem; text-align: center; font-size: 1.1rem; }
+        .wh-btn { width: 100%; padding: 1rem; border: 1px solid var(--border); background: white; border-radius: 10px; cursor: pointer; text-align: left; margin-bottom: 0.65rem; transition: all 0.15s; }
+        .wh-btn:hover { border-color: var(--primary); background: var(--primary-light); }
+        .wh-name { font-weight: 600; color: var(--primary-dark); font-size: 0.9rem; }
+        .wh-desc { color: var(--text-muted); font-size: 0.78rem; margin-top: 0.2rem; }
         .modal-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-top: 1rem; }
-        .m-cancel { padding: 0.75rem; background: #636e72; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
-        .m-save { padding: 0.75rem; background: #27ae60; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
+        .m-cancel { padding: 0.7rem; background: #f5f5f5; color: #555; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+        .m-save { padding: 0.7rem; background: var(--primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.9rem; }
 
-        @media(max-width:600px){
-            .header h1 { font-size: 1.1rem; }
+        /* BOTTOM NAV (mobile only) */
+        .bottom-nav {
+            display: none;
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            background: var(--white);
+            border-top: 1px solid var(--border);
+            z-index: 200;
+            padding: 6px 0 env(safe-area-inset-bottom, 6px);
+        }
+        .bottom-nav-inner {
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+        }
+        .bn-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+            padding: 4px 8px;
+            cursor: pointer;
+            border-radius: 8px;
+            min-width: 52px;
+            transition: all 0.15s;
+            border: none;
+            background: transparent;
+        }
+        .bn-icon {
+            font-size: 1.2rem;
+            line-height: 1;
+        }
+        .bn-label {
+            font-size: 0.65rem;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+        .bn-item.active .bn-label { color: var(--primary); }
+        .bn-item.active .bn-icon-wrap {
+            background: var(--primary-light);
+            border-radius: 8px;
+        }
+        .bn-icon-wrap {
+            width: 36px; height: 28px;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 8px;
+        }
+
+        /* Склады submenu in bottom nav */
+        .wh-sheet {
+            display: none;
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            background: var(--white);
+            border-radius: 16px 16px 0 0;
+            border-top: 1px solid var(--border);
+            z-index: 300;
+            padding: 1rem;
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.1);
+        }
+        .wh-sheet.open { display: block; }
+        .wh-sheet-title { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); text-align: center; margin-bottom: 0.75rem; }
+        .wh-sheet-item {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0.85rem 1rem;
+            border-radius: 10px;
+            margin-bottom: 6px;
+            background: var(--bg);
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+        .wh-sheet-overlay {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.4);
+            z-index: 250;
+        }
+        .wh-sheet-overlay.open { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .tabs { display: none; }
+            .bottom-nav { display: block; }
+            .main { padding-bottom: 80px; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 480px) {
+            .main { padding: 0.75rem; padding-bottom: 80px; }
             .form-grid { grid-template-columns: 1fr; }
-            table th, table td { padding: 0.5rem 0.4rem; font-size: 0.75rem; }
+            table th, table td { padding: 0.5rem 0.5rem; font-size: 0.75rem; }
         }
     </style>
 </head>
@@ -154,7 +352,7 @@
 <!-- ЭКРАН ВХОДА -->
 <div id="loginScreen">
     <div class="login-box">
-        <div class="logo">📦</div>
+        <div class="login-logo">📦</div>
         <h2>Склад Skechers</h2>
         <p>Введите пароль для входа</p>
         <input type="password" id="passwordInput" placeholder="Пароль..."
@@ -168,8 +366,14 @@
 <div id="mainApp">
 
 <div class="header">
-    <h1>📦 Управление складом Skechers</h1>
-    <p><span id="syncDot"></span><span id="syncStatus">Подключение...</span></p>
+    <div class="header-left">
+        <div class="header-icon">📦</div>
+        <h1>Управление складом Skechers</h1>
+    </div>
+    <div class="header-sync">
+        <span id="syncDot"></span>
+        <span id="syncStatus">Подключение...</span>
+    </div>
 </div>
 
 <div class="tabs">
@@ -182,117 +386,196 @@
     <button class="tab" onclick="switchTab('settings',this)">⚙️ Настройки</button>
 </div>
 
-<div class="container">
+<div class="page-body">
 
-    <div id="import" class="tab-content">
-        <div class="card">
-            <h2>📥 Импорт из Excel</h2>
-            <div class="info-box">ℹ️ Excel файл должен содержать колонку <strong>ITEM NAME</strong></div>
-            <div class="form-group" style="margin-bottom:1rem;">
-                <label>Excel файл (.xlsx / .xls / .csv)</label>
-                <input type="file" id="excelFile" accept=".xlsx,.xls,.csv">
-            </div>
-            <button class="btn" onclick="importExcel()">📤 Загрузить товары</button>
-            <div id="importResult" style="margin-top:1rem;"></div>
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+        <div class="sidebar-label">Склады</div>
+        <div class="sidebar-item" onclick="switchTabByName('farovon')">🏢 Фаровон <span class="s-count" id="sb-far">0</span></div>
+        <div class="sidebar-item" onclick="switchTabByName('ovir')">🏢 Ovir <span class="s-count" id="sb-ovir">0</span></div>
+        <div class="sidebar-item" onclick="switchTabByName('ashan')">🏢 Ашан <span class="s-count" id="sb-ashan">0</span></div>
+        <div class="sidebar-label">Статус</div>
+        <div class="sidebar-item">✅ Распределены <span class="s-count" id="sb-dist">0</span></div>
+        <div class="sidebar-item">⚠️ Ожидают <span class="s-count" id="sb-pend">0</span></div>
+        <div class="sidebar-bottom">
+            <button class="sidebar-btn" onclick="exportAll()">📊 Выгрузить Excel</button>
+            <button class="sidebar-btn danger" onclick="clearAll()">🗑️ Удалить все</button>
         </div>
     </div>
 
-    <div id="add" class="tab-content">
-        <div class="card">
-            <h2>➕ Добавить товар</h2>
-            <div class="form-grid">
-                <div class="form-group"><label>Артикул *</label><input type="text" id="addArticle" placeholder="Артикул..."></div>
-                <div class="form-group"><label>Название</label><input type="text" id="addName" placeholder="Название..."></div>
-            </div>
-            <p style="font-weight:600;color:#FF6B35;margin-bottom:0.75rem;font-size:0.95rem;">📍 Локация в Фаровоне (опционально)</p>
-            <div class="form-grid">
-                <div class="form-group"><label>Этаж</label>
-                    <select id="addFloor"><option value="">Без локации</option><option value="1">1️⃣ Первый</option><option value="2">2️⃣ Второй</option></select>
+    <!-- MAIN CONTENT -->
+    <div class="main">
+
+        <!-- ИМПОРТ -->
+        <div id="import" class="tab-content">
+            <div class="card">
+                <div class="card-header"><span class="card-title">📥 Импорт из Excel</span></div>
+                <div class="info-box">ℹ️ Excel файл должен содержать колонку <strong>ITEM NAME</strong></div>
+                <div class="form-group" style="margin-bottom:1rem;">
+                    <label>Excel файл (.xlsx / .xls / .csv)</label>
+                    <input type="file" id="excelFile" accept=".xlsx,.xls,.csv">
                 </div>
-                <div class="form-group"><label>Ряд</label>
-                    <select id="addRow"><option value="">—</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select>
+                <button class="btn" onclick="importExcel()">📤 Загрузить товары</button>
+                <div id="importResult" style="margin-top:1rem;"></div>
+            </div>
+        </div>
+
+        <!-- ДОБАВИТЬ -->
+        <div id="add" class="tab-content">
+            <div class="card">
+                <div class="card-header"><span class="card-title">➕ Добавить товар</span></div>
+                <div class="form-grid">
+                    <div class="form-group"><label>Артикул *</label><input type="text" id="addArticle" placeholder="Артикул..."></div>
+                    <div class="form-group"><label>Название</label><input type="text" id="addName" placeholder="Название..."></div>
                 </div>
-                <div class="form-group"><label>Ячейка</label>
-                    <select id="addCell"><option value="">—</option><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option><option>F</option><option>G</option><option>H</option><option>I</option><option>J</option><option>K</option><option>L</option><option>M</option><option>N</option><option>O</option></select>
+                <p style="font-weight:600;color:var(--primary);margin-bottom:0.75rem;font-size:0.9rem;">📍 Локация в Фаровоне (опционально)</p>
+                <div class="form-grid">
+                    <div class="form-group"><label>Этаж</label>
+                        <select id="addFloor"><option value="">Без локации</option><option value="1">1️⃣ Первый</option><option value="2">2️⃣ Второй</option></select>
+                    </div>
+                    <div class="form-group"><label>Ряд</label>
+                        <select id="addRow"><option value="">—</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select>
+                    </div>
+                    <div class="form-group"><label>Ячейка</label>
+                        <select id="addCell"><option value="">—</option><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option><option>F</option><option>G</option><option>H</option><option>I</option><option>J</option><option>K</option><option>L</option><option>M</option><option>N</option><option>O</option></select>
+                    </div>
+                </div>
+                <button class="btn" style="margin-top:0.75rem;" onclick="addItem()">✅ Добавить товар</button>
+            </div>
+        </div>
+
+        <!-- ПОИСК -->
+        <div id="search" class="tab-content active">
+            <div class="card">
+                <div class="card-header"><span class="card-title">🔍 Поиск товара</span></div>
+                <div class="form-group">
+                    <label>Артикул</label>
+                    <input type="text" id="searchQ" placeholder="Введите артикул..." oninput="searchItem()">
+                </div>
+                <div id="searchResult" style="margin-top:1rem;"></div>
+            </div>
+        </div>
+
+        <!-- ФАРОВОН -->
+        <div id="farovon" class="tab-content">
+            <div class="stats-grid" style="margin-bottom:1rem;">
+                <div class="stat-card accent"><div class="s-val" id="sTotal">0</div><div class="s-lbl">Всего товаров</div></div>
+                <div class="stat-card"><div class="s-val" id="sFar">0</div><div class="s-lbl">Фаровон</div></div>
+                <div class="stat-card"><div class="s-val" id="sDist">0</div><div class="s-lbl">Распределено</div></div>
+                <div class="stat-card"><div class="s-val warn" id="sPend">0</div><div class="s-lbl">Ожидают</div></div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">🏢 Склад Фаровон</span>
+                    <div class="card-actions">
+                        <button class="btn-outline green" onclick="printWh('1')">🖨️ Печать</button>
+                    </div>
+                </div>
+                <div class="filter-row">
+                    <div class="filter-chip active" onclick="setFarovonFilter('',this)">Все</div>
+                    <div class="filter-chip" onclick="setFarovonFilter('dist',this)">✅ Распределены</div>
+                    <div class="filter-chip" onclick="setFarovonFilter('undist',this)">⚠️ Ожидают</div>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Артикул</th><th>Название</th><th>Эт.</th><th>Ряд</th><th>Яч.</th><th>Действия</th></tr></thead>
+                        <tbody id="farovonBody"></tbody>
+                    </table>
                 </div>
             </div>
-            <button class="btn" style="margin-top:0.75rem;" onclick="addItem()">✅ Добавить товар</button>
         </div>
-    </div>
 
-    <div id="search" class="tab-content active">
-        <div class="card">
-            <h2>🔍 Поиск товара</h2>
-            <div class="form-group">
-                <label>Артикул</label>
-                <input type="text" id="searchQ" placeholder="Введите артикул..." oninput="searchItem()">
-            </div>
-            <div id="searchResult" style="margin-top:1rem;"></div>
-        </div>
-    </div>
-
-    <div id="farovon" class="tab-content">
-        <div class="card">
-            <h2>🏢 Склад Фаровон</h2>
-            <div class="form-grid" style="margin-bottom:1rem;">
-                <div class="form-group"><label>Фильтр</label>
-                    <select id="farovonFilter" onchange="renderFarovon()">
-                        <option value="">Все товары</option>
-                        <option value="dist">✅ Распределены</option>
-                        <option value="undist">⚠️ Не распределены</option>
-                    </select>
+        <!-- OVIR -->
+        <div id="ovir" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">🏢 Склад Skechers Ovir</span>
+                    <div class="card-actions"><button class="btn-outline green" onclick="printWh('2')">🖨️ Печать</button></div>
                 </div>
-                <div class="form-group"><label>&nbsp;</label><button class="btn btn-green" onclick="printWh('1')">🖨️ Печать</button></div>
-            </div>
-            <div style="overflow-x:auto;">
-                <table><thead><tr><th>Артикул</th><th>Название</th><th>Эт.</th><th>Ряд</th><th>Яч.</th><th>Действия</th></tr></thead>
-                <tbody id="farovonBody"></tbody></table>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Артикул</th><th>Название</th><th>Локация</th><th>Действия</th></tr></thead>
+                        <tbody id="ovirBody"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
-    </div>
 
-    <div id="ovir" class="tab-content">
-        <div class="card">
-            <h2>🏢 Склад Skechers Ovir</h2>
-            <button class="btn btn-green" style="margin-bottom:1rem;width:auto;padding:0.6rem 1.2rem;" onclick="printWh('2')">🖨️ Печать</button>
-            <div style="overflow-x:auto;">
-                <table><thead><tr><th>Артикул</th><th>Название</th><th>Локация</th><th>Действия</th></tr></thead>
-                <tbody id="ovirBody"></tbody></table>
+        <!-- АШАН -->
+        <div id="ashan" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">🏢 Склад Skechers Ашан</span>
+                    <div class="card-actions"><button class="btn-outline green" onclick="printWh('3')">🖨️ Печать</button></div>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Артикул</th><th>Название</th><th>Локация</th><th>Действия</th></tr></thead>
+                        <tbody id="ashanBody"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
-    </div>
 
-    <div id="ashan" class="tab-content">
-        <div class="card">
-            <h2>🏢 Склад Skechers Ашан</h2>
-            <button class="btn btn-green" style="margin-bottom:1rem;width:auto;padding:0.6rem 1.2rem;" onclick="printWh('3')">🖨️ Печать</button>
-            <div style="overflow-x:auto;">
-                <table><thead><tr><th>Артикул</th><th>Название</th><th>Локация</th><th>Действия</th></tr></thead>
-                <tbody id="ashanBody"></tbody></table>
+        <!-- НАСТРОЙКИ -->
+        <div id="settings" class="tab-content">
+            <div class="stats-grid">
+                <div class="stat-card accent"><div class="s-val" id="sTotal2">0</div><div class="s-lbl">Всего</div></div>
+                <div class="stat-card"><div class="s-val" id="sFar2">0</div><div class="s-lbl">Фаровон</div></div>
+                <div class="stat-card"><div class="s-val" id="sOvir2">0</div><div class="s-lbl">Ovir</div></div>
+                <div class="stat-card"><div class="s-val" id="sAsh2">0</div><div class="s-lbl">Ашан</div></div>
+                <div class="stat-card"><div class="s-val" id="sDist2">0</div><div class="s-lbl">Распределено</div></div>
+                <div class="stat-card"><div class="s-val warn" id="sPend2">0</div><div class="s-lbl">Ожидают</div></div>
+            </div>
+            <div class="card" style="margin-top:1rem;">
+                <div class="card-header"><span class="card-title">📊 Экспорт данных</span></div>
+                <button class="btn btn-success" onclick="exportAll()">📊 Выгрузить все данные в Excel</button>
+            </div>
+            <div class="card" style="margin-top:1rem; border-color:#fecaca;">
+                <div class="card-header"><span class="card-title" style="color:var(--danger);">⚠️ Опасная зона</span></div>
+                <div class="warn-box">Для удаления всех данных потребуется подтверждение паролем.</div>
+                <button class="btn btn-danger" onclick="clearAll()">🗑️ Удалить все товары</button>
             </div>
         </div>
-    </div>
 
-    <div id="settings" class="tab-content">
-        <div class="card">
-            <h2>📊 Статистика</h2>
-            <div class="grid-stats">
-                <div class="stat-item"><div class="stat-label">Всего</div><div class="stat-val" id="sTotal">0</div></div>
-                <div class="stat-item"><div class="stat-label">Фаровон</div><div class="stat-val" id="sFar">0</div></div>
-                <div class="stat-item"><div class="stat-label">Ovir</div><div class="stat-val" id="sOvir">0</div></div>
-                <div class="stat-item"><div class="stat-label">Ашан</div><div class="stat-val" id="sAsh">0</div></div>
-                <div class="stat-item"><div class="stat-label">Распределено</div><div class="stat-val" id="sDist">0</div></div>
-                <div class="stat-item"><div class="stat-label">Ожидают</div><div class="stat-val" id="sPend">0</div></div>
-            </div>
-        </div>
-        <div class="card">
-            <h2>🗑️ Опасная зона</h2>
-            <button class="btn btn-green" style="margin-bottom:0.75rem;" onclick="exportAll()">📊 Выгрузить все данные в Excel</button>
-<button class="btn btn-red" onclick="clearAll()">🗑️ Удалить все товары</button>
-        </div>
     </div>
-
 </div>
+</div>
+
+<!-- BOTTOM NAV (mobile) -->
+<div class="bottom-nav">
+    <div class="bottom-nav-inner">
+        <button class="bn-item" id="bn-import" onclick="bnSwitch('import','bn-import')">
+            <div class="bn-icon-wrap"><span class="bn-icon">📥</span></div>
+            <span class="bn-label">Импорт</span>
+        </button>
+        <button class="bn-item" id="bn-add" onclick="bnSwitch('add','bn-add')">
+            <div class="bn-icon-wrap"><span class="bn-icon">➕</span></div>
+            <span class="bn-label">Добавить</span>
+        </button>
+        <button class="bn-item active" id="bn-search" onclick="bnSwitch('search','bn-search')">
+            <div class="bn-icon-wrap"><span class="bn-icon">🔍</span></div>
+            <span class="bn-label">Поиск</span>
+        </button>
+        <button class="bn-item" id="bn-wh" onclick="openWhSheet()">
+            <div class="bn-icon-wrap"><span class="bn-icon">🏢</span></div>
+            <span class="bn-label">Склады</span>
+        </button>
+        <button class="bn-item" id="bn-settings" onclick="bnSwitch('settings','bn-settings')">
+            <div class="bn-icon-wrap"><span class="bn-icon">⚙️</span></div>
+            <span class="bn-label">Настройки</span>
+        </button>
+    </div>
+</div>
+
+<!-- WAREHOUSE SHEET (mobile) -->
+<div class="wh-sheet-overlay" id="whOverlay" onclick="closeWhSheet()"></div>
+<div class="wh-sheet" id="whSheet">
+    <div class="wh-sheet-title">Выберите склад</div>
+    <div class="wh-sheet-item" onclick="bnSwitchWh('farovon')">🏢 Фаровон <span class="s-count" id="bs-far">0</span></div>
+    <div class="wh-sheet-item" onclick="bnSwitchWh('ovir')">🏢 Skechers Ovir <span class="s-count" id="bs-ovir">0</span></div>
+    <div class="wh-sheet-item" onclick="bnSwitchWh('ashan')">🏢 Skechers Ашан <span class="s-count" id="bs-ashan">0</span></div>
+    <button style="width:100%;margin-top:6px;padding:0.75rem;border-radius:10px;border:1px solid var(--border);background:var(--bg);font-size:0.9rem;cursor:pointer;" onclick="closeWhSheet()">Отмена</button>
 </div>
 
 <!-- MODAL: ПЕРЕМЕСТИТЬ -->
@@ -302,7 +585,7 @@
         <button class="wh-btn" onclick="doMove('1')"><div class="wh-name">🏢 Фаровон</div><div class="wh-desc">Основной склад</div></button>
         <button class="wh-btn" onclick="doMove('2')"><div class="wh-name">🏢 Skechers Ovir</div><div class="wh-desc">Партнёрский склад</div></button>
         <button class="wh-btn" onclick="doMove('3')"><div class="wh-name">🏢 Skechers Ашан</div><div class="wh-desc">Торговый центр</div></button>
-        <button class="m-cancel" style="width:100%;" onclick="closeModal('moveModal')">Отмена</button>
+        <button class="m-cancel" style="width:100%;margin-top:0.5rem;" onclick="closeModal('moveModal')">Отмена</button>
     </div>
 </div>
 
@@ -353,8 +636,8 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
-// ── ПАРОЛЬ ──
 const CORRECT_PASSWORD = 'skechers';
+const DELETE_PASSWORD  = '202984';
 
 function checkPassword() {
     const input = document.getElementById('passwordInput').value;
@@ -371,20 +654,15 @@ function checkPassword() {
     }
 }
 
-// Проверить при загрузке (если уже вошёл в этой сессии)
 if (sessionStorage.getItem('auth') === '1') {
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('mainApp').style.display = 'block';
 }
 
-// ── STATE ──
 let items = [];
-let _moveArticle = null;
-let _locArticle  = null;
-let _editArticle = null;
-let _locEditArticle = null;
+let _moveArticle = null, _locArticle = null, _editArticle = null, _locEditArticle = null;
+let farovonFilter = '';
 
-// ── API ──
 async function api(method, path, body) {
     const opts = { method, headers: { 'Content-Type': 'application/json' } };
     if (body) opts.body = JSON.stringify(body);
@@ -392,20 +670,19 @@ async function api(method, path, body) {
     return r.json();
 }
 
-// ── SYNC ──
 async function loadItems() {
     try {
         items = await api('GET', '/items');
         renderAll();
         document.getElementById('syncStatus').textContent = 'Синхронизировано • ' + new Date().toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'});
-        document.getElementById('syncDot').style.background = '#2ecc71';
+        document.getElementById('syncDot').style.background = '#4ade80';
     } catch {
         document.getElementById('syncStatus').textContent = 'Нет соединения';
-        document.getElementById('syncDot').style.background = '#e74c3c';
+        document.getElementById('syncDot').style.background = '#ef4444';
     }
 }
 
-setInterval(() => { if (sessionStorage.getItem('auth')==='1') loadItems(); }, 3000);
+setInterval(() => { if (sessionStorage.getItem('auth') === '1') loadItems(); }, 3000);
 
 function switchTab(name, el) {
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
@@ -414,27 +691,69 @@ function switchTab(name, el) {
     if (el) el.classList.add('active');
 }
 
-function renderAll() {
-    renderFarovon();
-    renderWh('ovirBody', '2', 4);
-    renderWh('ashanBody', '3', 4);
-    renderStats();
+function switchTabByName(name) {
+    const names = ['import','add','search','farovon','ovir','ashan','settings'];
+    const idx = names.indexOf(name);
+    const tabs = document.querySelectorAll('.tab');
+    if (idx >= 0 && tabs[idx]) switchTab(name, tabs[idx]);
 }
 
+function bnSwitch(name, bnId) {
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById(name).classList.add('active');
+    const tabNames = ['import','add','search','farovon','ovir','ashan','settings'];
+    const tabs = document.querySelectorAll('.tab');
+    const idx = tabNames.indexOf(name);
+    if (idx >= 0 && tabs[idx]) tabs[idx].classList.add('active');
+    document.querySelectorAll('.bn-item').forEach(b => b.classList.remove('active'));
+    const bnEl = document.getElementById(bnId);
+    if (bnEl) bnEl.classList.add('active');
+    window.scrollTo(0, 0);
+}
+
+function openWhSheet() {
+    document.getElementById('whSheet').classList.add('open');
+    document.getElementById('whOverlay').classList.add('open');
+}
+
+function closeWhSheet() {
+    document.getElementById('whSheet').classList.remove('open');
+    document.getElementById('whOverlay').classList.remove('open');
+}
+
+function bnSwitchWh(name) {
+    closeWhSheet();
+    bnSwitch(name, 'bn-wh');
+}
+
+
+
+function setFarovonFilter(val, el) {
+    farovonFilter = val;
+    document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+    if (el) el.classList.add('active');
+    renderFarovon();
+}
+
+function renderAll() { renderFarovon(); renderWh('ovirBody','2',4); renderWh('ashanBody','3',4); renderStats(); }
+
 function renderFarovon() {
-    const f = document.getElementById('farovonFilter').value;
     let list = items.filter(i => i.warehouse === '1');
-    if (f === 'dist')   list = list.filter(i => i.floor && i.row && i.cell);
-    if (f === 'undist') list = list.filter(i => !i.floor || !i.row || !i.cell);
+    if (farovonFilter === 'dist')   list = list.filter(i => i.floor && i.row && i.cell);
+    if (farovonFilter === 'undist') list = list.filter(i => !i.floor || !i.row || !i.cell);
     const tb = document.getElementById('farovonBody');
     if (!list.length) { tb.innerHTML = emptyRow(6); return; }
     tb.innerHTML = list.map(i => `<tr>
-        <td><strong>${i.article}</strong></td><td>${i.name||'—'}</td>
-        <td>${i.floor||'—'}</td><td>${i.row||'—'}</td><td>${i.cell||'—'}</td>
+        <td><strong>${i.article}</strong></td>
+        <td style="color:#555">${i.name||'—'}</td>
+        <td>${i.floor ? `<span class="loc-badge">${i.floor}</span>` : '—'}</td>
+        <td>${i.row||'—'}</td>
+        <td>${i.cell||'—'}</td>
         <td>
-            <button class="action-btn" onclick="openLocEdit('${i.article}')">📍</button>
-            <button class="action-btn" style="background:#3498db" onclick="openMove('${i.article}')">📤</button>
-            <button class="action-btn" style="background:#9b59b6" onclick="openEdit('${i.article}')">✏️</button>
+            <button class="action-btn loc" onclick="openLocEdit('${i.article}')">📍</button>
+            <button class="action-btn move" onclick="openMove('${i.article}')">📤</button>
+            <button class="action-btn edit" onclick="openEdit('${i.article}')">✏️</button>
             <button class="action-btn del" onclick="delItem('${i.article}')">🗑️</button>
         </td></tr>`).join('');
 }
@@ -444,28 +763,36 @@ function renderWh(tbId, wh, cols) {
     const tb = document.getElementById(tbId);
     if (!list.length) { tb.innerHTML = emptyRow(cols); return; }
     tb.innerHTML = list.map(i => `<tr>
-        <td><strong>${i.article}</strong></td><td>${i.name||'—'}</td>
-        <td>${i.floor ? `Эт.${i.floor} Р.${i.row} Я.${i.cell}` : '—'}</td>
+        <td><strong>${i.article}</strong></td>
+        <td style="color:#555">${i.name||'—'}</td>
+        <td>${i.floor ? `<span class="loc-badge">Эт.${i.floor} Р.${i.row} Я.${i.cell}</span>` : '<span class="no-loc">⚠️ Без локации</span>'}</td>
         <td>
-            <button class="action-btn" onclick="openLocEdit('${i.article}')">📍</button>
-            <button class="action-btn" style="background:#3498db" onclick="openMove('${i.article}')">📤</button>
-            <button class="action-btn" style="background:#9b59b6" onclick="openEdit('${i.article}')">✏️</button>
+            <button class="action-btn loc" onclick="openLocEdit('${i.article}')">📍</button>
+            <button class="action-btn move" onclick="openMove('${i.article}')">📤</button>
+            <button class="action-btn edit" onclick="openEdit('${i.article}')">✏️</button>
             <button class="action-btn del" onclick="delItem('${i.article}')">🗑️</button>
         </td></tr>`).join('');
 }
 
 function renderStats() {
-    document.getElementById('sTotal').textContent = items.length;
-    document.getElementById('sFar').textContent   = items.filter(i=>i.warehouse==='1').length;
-    document.getElementById('sOvir').textContent  = items.filter(i=>i.warehouse==='2').length;
-    document.getElementById('sAsh').textContent   = items.filter(i=>i.warehouse==='3').length;
-    const d = items.filter(i=>i.floor&&i.row&&i.cell).length;
-    document.getElementById('sDist').textContent  = d;
-    document.getElementById('sPend').textContent  = items.filter(i=>i.warehouse==='1').length - d;
+    const total = items.length;
+    const far   = items.filter(i=>i.warehouse==='1').length;
+    const ovir  = items.filter(i=>i.warehouse==='2').length;
+    const ash   = items.filter(i=>i.warehouse==='3').length;
+    const dist  = items.filter(i=>i.floor&&i.row&&i.cell).length;
+    const pend  = far - items.filter(i=>i.warehouse==='1'&&i.floor&&i.row&&i.cell).length;
+    const set = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
+    set('sTotal',total); set('sTotal2',total);
+    set('sFar',far);     set('sFar2',far);
+    set('sOvir2',ovir);  set('sAsh2',ash);
+    set('sDist',dist);   set('sDist2',dist);
+    set('sPend',pend);   set('sPend2',pend);
+    set('sb-far',far);   set('sb-ovir',ovir); set('sb-ashan',ash);
+    set('sb-dist',dist); set('sb-pend',pend);
 }
 
 function emptyRow(c) {
-    return `<tr><td colspan="${c}" class="empty-state"><div class="empty-icon">📦</div><div>Товаров нет</div></td></tr>`;
+    return `<tr><td colspan="${c}"><div class="empty-state"><div class="empty-icon">📦</div><div>Товаров нет</div></div></td></tr>`;
 }
 
 function searchItem() {
@@ -475,11 +802,12 @@ function searchItem() {
     const item = items.find(i => i.article === q);
     if (!item) { el.innerHTML = '<div class="error-box">❌ Товар не найден</div>'; return; }
     const wh = item.warehouse==='1'?'Фаровон':item.warehouse==='2'?'Skechers Ovir':'Skechers Ашан';
-    const loc = item.floor ? `Этаж: ${item.floor} | Ряд: ${item.row} | Ячейка: ${item.cell}` : 'Без конкретной локации';
-    el.innerHTML = `<div class="success-box"><strong>✅ Найден!</strong><br>
-        <strong>Артикул:</strong> ${item.article}<br>
-        <strong>Название:</strong> ${item.name||'—'}
-        <div class="location-badge">📦 ${wh} — ${loc}</div></div>`;
+    const loc = item.floor ? `Эт.${item.floor} · Ряд ${item.row} · Яч. ${item.cell}` : 'Без конкретной локации';
+    el.innerHTML = `<div class="found-card">
+        <div class="f-article">✅ ${item.article}</div>
+        <div class="f-name">${item.name||'—'}</div>
+        <div class="found-loc">📦 ${wh} — ${loc}</div>
+    </div>`;
 }
 
 async function addItem() {
@@ -492,11 +820,8 @@ async function addItem() {
     const r = await api('POST', '/items', { article, name, warehouse:'1', floor, row, cell });
     if (r.error) { alert('❌ ' + r.error); return; }
     alert('✅ Товар добавлен!');
-    document.getElementById('addArticle').value = '';
-    document.getElementById('addName').value = '';
-    document.getElementById('addFloor').value = '';
-    document.getElementById('addRow').value = '';
-    document.getElementById('addCell').value = '';
+    ['addArticle','addName'].forEach(id => document.getElementById(id).value = '');
+    ['addFloor','addRow','addCell'].forEach(id => document.getElementById(id).value = '');
     await loadItems();
 }
 
@@ -516,9 +841,7 @@ async function importExcel() {
             res.innerHTML = `<div class="success-box">✅ Готово! Добавлено: <strong>${r.added}</strong> | Дубликатов: <strong>${r.skipped}</strong></div>`;
             document.getElementById('excelFile').value = '';
             await loadItems();
-        } catch(err) {
-            res.innerHTML = `<div class="error-box">❌ Ошибка: ${err.message}</div>`;
-        }
+        } catch(err) { res.innerHTML = `<div class="error-box">❌ Ошибка: ${err.message}</div>`; }
     };
     reader.readAsArrayBuffer(file);
 }
@@ -530,33 +853,20 @@ async function delItem(article) {
 }
 
 async function clearAll() {
-    const pwd = prompt('🔐 Введите пароль для удаления:');
-    if (pwd !== '202984') { alert('❌ Неверный пароль!'); return; }
-    if (!confirm('⚠️ Удалить ВСЕ товары?')) return;
+    const pwd = prompt('🔐 Введите пароль для удаления всех данных:');
+    if (pwd !== DELETE_PASSWORD) { alert('❌ Неверный пароль!'); return; }
+    if (!confirm('⚠️ Удалить ВСЕ товары? Это действие нельзя отменить!')) return;
     await api('DELETE', '/items');
     await loadItems();
 }
 
 function exportAll() {
     const wb = XLSX.utils.book_new();
-    const whNames = { '1': 'Фаровон', '2': 'Ovir', '3': 'Ашан' };
-    const allData = items.map(i => ({
-        'Артикул': i.article,
-        'Название': i.name || '—',
-        'Склад': whNames[i.warehouse] || '—',
-        'Этаж': i.floor || '—',
-        'Ряд': i.row || '—',
-        'Ячейка': i.cell || '—'
-    }));
+    const whNames = { '1':'Фаровон', '2':'Ovir', '3':'Ашан' };
+    const allData = items.map(i => ({ 'Артикул':i.article, 'Название':i.name||'—', 'Склад':whNames[i.warehouse]||'—', 'Этаж':i.floor||'—', 'Ряд':i.row||'—', 'Ячейка':i.cell||'—' }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(allData), 'Все товары');
     ['1','2','3'].forEach(wh => {
-        const list = items.filter(i => i.warehouse === wh).map(i => ({
-            'Артикул': i.article,
-            'Название': i.name || '—',
-            'Этаж': i.floor || '—',
-            'Ряд': i.row || '—',
-            'Ячейка': i.cell || '—'
-        }));
+        const list = items.filter(i => i.warehouse === wh).map(i => ({ 'Артикул':i.article, 'Название':i.name||'—', 'Этаж':i.floor||'—', 'Ряд':i.row||'—', 'Ячейка':i.cell||'—' }));
         if (list.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(list), whNames[wh]);
     });
     XLSX.writeFile(wb, 'Склад_Skechers_' + new Date().toLocaleDateString('ru-RU') + '.xlsx');
@@ -567,10 +877,7 @@ function openMove(article) { _moveArticle = article; openModal('moveModal'); }
 async function doMove(wh) {
     closeModal('moveModal');
     if (wh === '1') { _locArticle = _moveArticle; openModal('locModal'); }
-    else {
-        await api('PATCH', `/items/${encodeURIComponent(_moveArticle)}`, { warehouse:wh, floor:null, row:null, cell:null });
-        await loadItems();
-    }
+    else { await api('PATCH', `/items/${encodeURIComponent(_moveArticle)}`, { warehouse:wh, floor:null, row:null, cell:null }); await loadItems(); }
 }
 
 async function confirmLoc() {
@@ -629,7 +936,7 @@ function printWh(wh) {
     const names = {'1':'Фаровон','2':'Skechers Ovir','3':'Skechers Ашан'};
     const list = items.filter(i => i.warehouse === wh);
     let html = `<html><head><meta charset="UTF-8"><title>${names[wh]}</title>
-    <style>body{font-family:Arial;padding:20px}h1{color:#FF6B35}table{width:100%;border-collapse:collapse}th{background:#1a1a2e;color:white;padding:10px}td{padding:10px;border-bottom:1px solid #ddd}tr:nth-child(even){background:#f8f9fa}.loc{color:#FF6B35;font-weight:bold}</style>
+    <style>body{font-family:Arial;padding:20px}h1{color:#1e1b4b}table{width:100%;border-collapse:collapse}th{background:#1e1b4b;color:#a5b4fc;padding:10px}td{padding:10px;border-bottom:1px solid #eee}tr:nth-child(even){background:#f8f9fa}.loc{color:#4f46e5;font-weight:bold}</style>
     </head><body><h1>🏢 ${names[wh]}</h1><p>Дата: ${new Date().toLocaleString('ru-RU')}</p>
     <table><thead><tr><th>Артикул</th><th>Название</th><th>Локация</th></tr></thead><tbody>`;
     list.forEach(i => {
@@ -646,4 +953,3 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
 </script>
 </body>
 </html>
-
