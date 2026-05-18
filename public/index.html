@@ -529,10 +529,36 @@ async function delItem(article) {
 }
 
 async function clearAll() {
+    const pwd = prompt('🔐 Введите пароль для удаления:');
+    if (pwd !== '202984') { alert('❌ Неверный пароль!'); return; }
     if (!confirm('⚠️ Удалить ВСЕ товары?')) return;
-    if (!confirm('Последнее предупреждение!')) return;
     await api('DELETE', '/items');
     await loadItems();
+}
+
+function exportAll() {
+    const wb = XLSX.utils.book_new();
+    const whNames = { '1': 'Фаровон', '2': 'Ovir', '3': 'Ашан' };
+    const allData = items.map(i => ({
+        'Артикул': i.article,
+        'Название': i.name || '—',
+        'Склад': whNames[i.warehouse] || '—',
+        'Этаж': i.floor || '—',
+        'Ряд': i.row || '—',
+        'Ячейка': i.cell || '—'
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(allData), 'Все товары');
+    ['1','2','3'].forEach(wh => {
+        const list = items.filter(i => i.warehouse === wh).map(i => ({
+            'Артикул': i.article,
+            'Название': i.name || '—',
+            'Этаж': i.floor || '—',
+            'Ряд': i.row || '—',
+            'Ячейка': i.cell || '—'
+        }));
+        if (list.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(list), whNames[wh]);
+    });
+    XLSX.writeFile(wb, 'Склад_Skechers_' + new Date().toLocaleDateString('ru-RU') + '.xlsx');
 }
 
 function openMove(article) { _moveArticle = article; openModal('moveModal'); }
