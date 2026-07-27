@@ -345,6 +345,10 @@
             .form-grid { grid-template-columns: 1fr; }
             table th, table td { padding: 0.5rem 0.5rem; font-size: 0.75rem; }
         }
+        .stk-cell { text-align: center; font-variant-numeric: tabular-nums; }
+        .stk-n { font-weight: 700; color: var(--primary-dark); }
+        .stk-x { color: var(--text-muted); }
+        .stk-load { color: #bbb; }
     </style>
 </head>
 <body>
@@ -468,6 +472,7 @@
                 <div class="card-header">
                     <span class="card-title">🏢 Склад Фаровон</span>
                     <div class="card-actions">
+                        <button class="btn-outline" onclick="refreshStocks()">🔄 Остатки</button>
                         <button class="btn-outline green" onclick="printWh('1')">🖨️ Печать</button>
                     </div>
                 </div>
@@ -478,7 +483,7 @@
                 </div>
                 <div class="table-wrap">
                     <table>
-                        <thead><tr><th>Артикул</th><th>Название</th><th>Эт.</th><th>Ряд</th><th>Яч.</th><th>Действия</th></tr></thead>
+                        <thead><tr><th>Артикул</th><th>Название</th><th>Эт.</th><th>Ряд</th><th>Яч.</th><th>📊 Остаток</th><th>Действия</th></tr></thead>
                         <tbody id="farovonBody"></tbody>
                     </table>
                 </div>
@@ -494,7 +499,7 @@
                 </div>
                 <div class="table-wrap">
                     <table>
-                        <thead><tr><th>Артикул</th><th>Название</th><th>Локация</th><th>Действия</th></tr></thead>
+                        <thead><tr><th>Артикул</th><th>Название</th><th>Локация</th><th>📊 Остаток</th><th>Действия</th></tr></thead>
                         <tbody id="ovirBody"></tbody>
                     </table>
                 </div>
@@ -510,7 +515,7 @@
                 </div>
                 <div class="table-wrap">
                     <table>
-                        <thead><tr><th>Артикул</th><th>Название</th><th>Локация</th><th>Действия</th></tr></thead>
+                        <thead><tr><th>Артикул</th><th>Название</th><th>Локация</th><th>📊 Остаток</th><th>Действия</th></tr></thead>
                         <tbody id="ashanBody"></tbody>
                     </table>
                 </div>
@@ -736,20 +741,65 @@ function setFarovonFilter(val, el) {
     renderFarovon();
 }
 
-function renderAll() { renderFarovon(); renderWh('ovirBody','2',4); renderWh('ashanBody','3',4); renderStats(); }
+// ===== Остатки из МойСклад (ленивая загрузка + кэш на клиенте) =====
+const stockCache = {}; // article -> {stock,...} | null | 'loading'
+
+function stockCellHTML(article) {
+    const v = stockCache[article];
+    let inner;
+    if (v && typeof v === 'object') inner = `<span class="stk-n">${v.stock}</span>`;
+    else if (v === null) inner = '<span class="stk-x">—</span>';
+    else inner = '<span class="stk-load">…</span>';
+    return `<td class="stk-cell" data-article="${article}">${inner}</td>`;
+}
+
+async function loadStock(article) {
+    if (stockCache[article] === 'loading') return;
+    stockCache[article] = 'loading';
+    try {
+        const r = await fetch('/api/stock/' + encodeURIComponent(article));
+        stockCache[article] = r.ok ? await r.json() : null;
+    } catch { stockCache[article] = null; }
+    applyStock(article);
+}
+
+function applyStock(article) {
+    const v = stockCache[article];
+    const html = (v && typeof v === 'object')
+        ? `<span class="stk-n">${v.stock}</span>`
+        : '<span class="stk-x">—</span>';
+    document.querySelectorAll('.stk-cell').forEach(td => {
+        if (td.getAttribute('data-article') === article) td.innerHTML = html;
+    });
+}
+
+function triggerStockLoads() {
+    document.querySelectorAll('.stk-cell').forEach(td => {
+        const art = td.getAttribute('data-article');
+        if (art && !(art in stockCache)) loadStock(art);
+    });
+}
+
+function refreshStocks() {
+    for (const k in stockCache) delete stockCache[k];
+    renderAll();
+}
+
+function renderAll() { renderFarovon(); renderWh('ovirBody','2',5); renderWh('ashanBody','3',5); renderStats(); triggerStockLoads(); }
 
 function renderFarovon() {
     let list = items.filter(i => i.warehouse === '1');
     if (farovonFilter === 'dist')   list = list.filter(i => i.floor && i.row && i.cell);
     if (farovonFilter === 'undist') list = list.filter(i => !i.floor || !i.row || !i.cell);
     const tb = document.getElementById('farovonBody');
-    if (!list.length) { tb.innerHTML = emptyRow(6); return; }
+    if (!list.length) { tb.innerHTML = emptyRow(7); return; }
     tb.innerHTML = list.map(i => `<tr>
         <td><strong>${i.article}</strong></td>
         <td style="color:#555">${i.name||'—'}</td>
         <td>${i.floor ? `<span class="loc-badge">${i.floor}</span>` : '—'}</td>
         <td>${i.row||'—'}</td>
         <td>${i.cell||'—'}</td>
+        ${stockCellHTML(i.article)}
         <td>
             <button class="action-btn loc" onclick="openLocEdit('${i.article}')">📍</button>
             <button class="action-btn move" onclick="openMove('${i.article}')">📤</button>
@@ -766,6 +816,7 @@ function renderWh(tbId, wh, cols) {
         <td><strong>${i.article}</strong></td>
         <td style="color:#555">${i.name||'—'}</td>
         <td>${i.floor ? `<span class="loc-badge">Эт.${i.floor} Р.${i.row} Я.${i.cell}</span>` : '<span class="no-loc">⚠️ Без локации</span>'}</td>
+        ${stockCellHTML(i.article)}
         <td>
             <button class="action-btn loc" onclick="openLocEdit('${i.article}')">📍</button>
             <button class="action-btn move" onclick="openMove('${i.article}')">📤</button>
@@ -807,7 +858,9 @@ function searchItem() {
         <div class="f-article">✅ ${item.article}</div>
         <div class="f-name">${item.name||'—'}</div>
         <div class="found-loc">📦 ${wh} — ${loc}</div>
+        <div class="found-loc">📊 Остаток МойСклад: <span class="stk-cell" data-article="${item.article}">…</span></div>
     </div>`;
+    triggerStockLoads();
 }
 
 async function addItem() {
