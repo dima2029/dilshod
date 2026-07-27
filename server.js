@@ -5,18 +5,37 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// ---------- Конфигурация (всё из переменных окружения Railway) ----------
 const MONGO_URL = process.env.MONGO_URL;
 const DB_NAME = 'skechers';
+
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const NOTIFY_CHAT_ID = process.env.TELEGRAM_CHAT_ID; // куда слать уведомления
+const TG_ADMINS = (process.env.TELEGRAM_ADMINS || NOTIFY_CHAT_ID || '')
+  .split(',').map(s => s.trim()).filter(Boolean); // кому разрешены команды
+
+// МойСклад
+const MS_API = process.env.MOYSKLAD_API_URL || 'https://api.moysklad.ru/api/remap/1.2';
+const MS_TOKEN = process.env.MOYSKLAD_TOKEN;
+const MS_LOGIN = process.env.MOYSKLAD_LOGIN;
+const MS_PASSWORD = process.env.MOYSKLAD_PASSWORD;
+const MS_MATCH_FIELD = process.env.MOYSKLAD_MATCH_FIELD || 'article'; // article | code
+
+const TG = BOT_TOKEN ? `https://api.telegram.org/bot${BOT_TOKEN}` : null;
 
 let db;
 
 async function connectDB() {
+  if (!MONGO_URL) throw new Error('Не задана переменная окружения MONGO_URL');
   const client = new MongoClient(MONGO_URL);
   await client.connect();
   db = client.db(DB_NAME).collection('items');
   console.log('✅ MongoDB подключена');
 }
 
+// ======================================================================
+//  REST API (сайт)
+// ======================================================================
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -44,24 +63,28 @@ app.post('/api/items', async (req, res) => {
     cell: cell || null,
     created_at: new Date().toISOString()
   });
+  notify(`➕ Добавлен товар\nАртикул: <b>${esc(key)}</b>\nНазвание: ${esc(name || key)}`);
   res.json({ success: true });
 });
 
 // Обновить товар
 app.patch('/api/items/:article', async (req, res) => {
   await db.updateOne({ article: req.params.article }, { $set: req.body });
+  notify(`✏️ Изменён товар <b>${esc(req.params.article)}</b>`);
   res.json({ success: true });
 });
 
 // Удалить товар
 app.delete('/api/items/:article', async (req, res) => {
   await db.deleteOne({ article: req.params.article });
+  notify(`🗑 Удалён товар <b>${esc(req.params.article)}</b>`);
   res.json({ success: true });
 });
 
 // Удалить все
 app.delete('/api/items', async (req, res) => {
   await db.deleteMany({});
+  notify('⚠️ Удалены <b>все</b> товары');
   res.json({ success: true });
 });
 
@@ -88,9 +111,290 @@ app.post('/api/items/import', async (req, res) => {
     }
   }
 
+  notify(`📥 Импорт: добавлено <b>${added}</b>, пропущено ${items.length - added}`);
   res.json({ success: true, added, skipped: items.length - added });
 });
 
+// Остаток по артикулу (для сайта) — данные из МойСклад
+app.get('/api/stock/:article', async (req, res) => {
+  try {
+    const stock = await fetchStock(req.params.article);
+    if (!stock) return res.status(404).json({ error: 'Не найдено в МойСклад' });
+    res.json(stock);
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ======================================================================
+//  Интеграция с МойСклад (остатки)
+// ======================================================================
+function msAuthHeader() {
+  if (MS_TOKEN) return `Bearer ${MS_TOKEN}`;
+  if (MS_LOGIN && MS_PASSWORD) {
+    return 'Basic ' + Buffer.from(`${MS_LOGIN}:${MS_PASSWORD}`).toString('base64');
+  }
+  return null;
+}
+
+function msConfigured() {
+  return Boolean(msAuthHeader());
+}
+
+// Возвращает { name, article, stock, reserve, inTransit, quantity, price } или null
+async function fetchStock(article) {
+  const auth = msAuthHeader();
+  if (!auth) throw new Error('МойСклад не настроен (нет токена или логина/пароля)');
+
+  const field = MS_MATCH_FIELD === 'code' ? 'code' : 'article';
+  const url = `${MS_API}/entity/assortment?filter=${field}=${encodeURIComponent(article)}&limit=1`;
+
+  const r = await fetch(url, {
+    headers: {
+      'Authorization': auth,
+      'Accept': 'application/json;charset=utf-8',
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!r.ok) {
+    const body = await r.text().catch(() => '');
+    throw new Error(`МойСклад ответил ${r.status}. ${body.slice(0, 200)}`);
+  }
+
+  const data = await r.json();
+  const rowItem = data.rows && data.rows[0];
+  if (!rowItem) return null;
+
+  const price = Array.isArray(rowItem.salePrices) && rowItem.salePrices[0]
+    ? rowItem.salePrices[0].value / 100
+    : null;
+
+  return {
+    name: rowItem.name || article,
+    article: rowItem.article || rowItem.code || article,
+    stock: rowItem.stock ?? 0,        // физический остаток
+    reserve: rowItem.reserve ?? 0,    // в резерве
+    inTransit: rowItem.inTransit ?? 0,// ожидается
+    quantity: rowItem.quantity ?? 0,  // доступно
+    price
+  };
+}
+
+// ======================================================================
+//  Telegram-бот (long polling, без вебхука и без доп. зависимостей)
+// ======================================================================
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// Экранирование для parse_mode=HTML
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function tgCall(method, payload) {
+  if (!TG) return null;
+  const r = await fetch(`${TG}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  return r.json();
+}
+
+async function tgSend(chatId, text, extra = {}) {
+  return tgCall('sendMessage', {
+    chat_id: chatId,
+    text,
+    parse_mode: 'HTML',
+    disable_web_page_preview: true,
+    ...extra
+  });
+}
+
+// Отправка файла (экспорт)
+async function tgSendDocument(chatId, filename, content, caption) {
+  if (!TG) return null;
+  const form = new FormData();
+  form.append('chat_id', String(chatId));
+  if (caption) form.append('caption', caption);
+  form.append('document', new Blob([content], { type: 'text/csv' }), filename);
+  const r = await fetch(`${TG}/sendDocument`, { method: 'POST', body: form });
+  return r.json();
+}
+
+// Уведомление владельцу
+function notify(text) {
+  if (!TG || !NOTIFY_CHAT_ID) return;
+  tgSend(NOTIFY_CHAT_ID, text).catch(e => console.error('notify error', e.message));
+}
+
+function isAllowed(chatId) {
+  if (TG_ADMINS.length === 0) return true; // если список пуст — доступ всем
+  return TG_ADMINS.includes(String(chatId));
+}
+
+function itemLine(it) {
+  const place = [
+    it.warehouse ? `склад ${it.warehouse}` : null,
+    it.floor ? `этаж ${it.floor}` : null,
+    it.row ? `ряд ${it.row}` : null,
+    it.cell ? `ячейка ${it.cell}` : null
+  ].filter(Boolean).join(', ') || 'место не указано';
+  return `📦 <b>${esc(it.article)}</b> — ${esc(it.name)}\n    ${esc(place)}`;
+}
+
+const HELP = [
+  '<b>Команды склада Skechers</b>',
+  '',
+  '/list — все товары',
+  '/find АРТИКУЛ — найти товар и его место',
+  '/add АРТИКУЛ Название — добавить товар',
+  '/del АРТИКУЛ — удалить товар',
+  '/count — количество товаров',
+  '/export — выгрузить весь список файлом',
+  '/ostatki АРТИКУЛ — остаток в МойСклад'
+].join('\n');
+
+async function handleCommand(chatId, text) {
+  const [rawCmd, ...rest] = text.trim().split(/\s+/);
+  const cmd = rawCmd.split('@')[0].toLowerCase(); // убрать @botname
+  const arg = rest.join(' ').trim();
+  const article = (rest[0] || '').toUpperCase();
+
+  switch (cmd) {
+    case '/start':
+    case '/help':
+      return tgSend(chatId, HELP);
+
+    case '/count': {
+      const n = await db.countDocuments({});
+      return tgSend(chatId, `Всего товаров: <b>${n}</b>`);
+    }
+
+    case '/list': {
+      const items = await db.find({}).limit(50).toArray();
+      if (!items.length) return tgSend(chatId, 'Список пуст.');
+      const total = await db.countDocuments({});
+      let msg = items.map(itemLine).join('\n\n');
+      if (total > items.length) msg += `\n\n…и ещё ${total - items.length}. Используй /export для полного списка.`;
+      return tgSend(chatId, msg);
+    }
+
+    case '/find': {
+      if (!article) return tgSend(chatId, 'Укажи артикул: /find SK-12345');
+      const it = await db.findOne({ article });
+      if (!it) return tgSend(chatId, `Товар <b>${esc(article)}</b> не найден.`);
+      return tgSend(chatId, itemLine(it));
+    }
+
+    case '/add': {
+      if (!article) return tgSend(chatId, 'Формат: /add АРТИКУЛ Название');
+      const exists = await db.findOne({ article });
+      if (exists) return tgSend(chatId, `Товар <b>${esc(article)}</b> уже существует.`);
+      const name = rest.slice(1).join(' ') || article;
+      await db.insertOne({
+        article, name, warehouse: '1',
+        floor: null, row: null, cell: null,
+        created_at: new Date().toISOString()
+      });
+      return tgSend(chatId, `✅ Добавлен <b>${esc(article)}</b> — ${esc(name)}`);
+    }
+
+    case '/del': {
+      if (!article) return tgSend(chatId, 'Укажи артикул: /del SK-12345');
+      const r = await db.deleteOne({ article });
+      return tgSend(chatId, r.deletedCount
+        ? `🗑 Удалён <b>${esc(article)}</b>`
+        : `Товар <b>${esc(article)}</b> не найден.`);
+    }
+
+    case '/export': {
+      const items = await db.find({}).toArray();
+      if (!items.length) return tgSend(chatId, 'Список пуст — экспортировать нечего.');
+      const header = 'Артикул;Название;Склад;Этаж;Ряд;Ячейка;Дата\n';
+      const rows = items.map(it => [
+        it.article, it.name, it.warehouse, it.floor, it.row, it.cell, it.created_at
+      ].map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(';')).join('\n');
+      const csv = '﻿' + header + rows; // BOM для корректной кириллицы в Excel
+      return tgSendDocument(chatId, 'sklad.csv', csv, `Товаров: ${items.length}`);
+    }
+
+    case '/ostatki': {
+      if (!msConfigured()) return tgSend(chatId, 'Интеграция с МойСклад не настроена. Задай MOYSKLAD_TOKEN (или MOYSKLAD_LOGIN и MOYSKLAD_PASSWORD) в Railway.');
+      if (!article) return tgSend(chatId, 'Укажи артикул: /ostatki SK-12345');
+      await tgSend(chatId, '⏳ Запрашиваю остаток…');
+      try {
+        const s = await fetchStock(article);
+        if (!s) return tgSend(chatId, `В МойСклад ничего не найдено по <b>${esc(article)}</b>.`);
+        const lines = [
+          `📊 <b>${esc(s.name)}</b> (${esc(s.article)})`,
+          `Остаток: <b>${s.stock}</b>`,
+          `Доступно: <b>${s.quantity}</b>`,
+          `В резерве: ${s.reserve}`,
+          `Ожидается: ${s.inTransit}`
+        ];
+        if (s.price != null) lines.push(`Цена: ${s.price}`);
+        return tgSend(chatId, lines.join('\n'));
+      } catch (e) {
+        return tgSend(chatId, `⚠️ Ошибка МойСклад: ${esc(e.message)}`);
+      }
+    }
+
+    default:
+      return tgSend(chatId, 'Неизвестная команда. /help — список команд.');
+  }
+}
+
+async function handleUpdate(update) {
+  const msg = update.message || update.edited_message;
+  if (!msg || !msg.text) return;
+  const chatId = msg.chat.id;
+
+  if (!isAllowed(chatId)) {
+    await tgSend(chatId, `⛔ Нет доступа. Ваш chat_id: <code>${chatId}</code>`);
+    return;
+  }
+  if (msg.text.startsWith('/')) {
+    await handleCommand(chatId, msg.text);
+  } else {
+    await tgSend(chatId, 'Отправь команду. /help — список.');
+  }
+}
+
+async function startBot() {
+  // Убираем возможный вебхук, чтобы работал polling
+  await tgCall('deleteWebhook', { drop_pending_updates: false }).catch(() => {});
+  const me = await tgCall('getMe').catch(() => null);
+  if (me && me.ok) console.log(`🤖 Telegram-бот запущен: @${me.result.username}`);
+  else { console.error('❌ Не удалось запустить бота — проверь TELEGRAM_BOT_TOKEN'); return; }
+
+  let offset = 0;
+  while (true) {
+    try {
+      const r = await fetch(`${TG}/getUpdates?timeout=30&offset=${offset}`);
+      const data = await r.json();
+      if (data.ok) {
+        for (const upd of data.result) {
+          offset = upd.update_id + 1;
+          handleUpdate(upd).catch(e => console.error('handleUpdate', e.message));
+        }
+      }
+    } catch (e) {
+      console.error('poll error', e.message);
+      await sleep(3000);
+    }
+  }
+}
+
+// ======================================================================
+//  Старт
+// ======================================================================
 connectDB().then(() => {
   app.listen(PORT, () => console.log(`✅ Сервер запущен на порту ${PORT}`));
+  if (TG) startBot();
+  else console.log('ℹ️ Telegram-бот выключен (нет TELEGRAM_BOT_TOKEN)');
+}).catch(err => {
+  console.error('❌ Ошибка запуска:', err.message);
+  process.exit(1);
 });
