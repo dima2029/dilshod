@@ -1,13 +1,13 @@
 const express = require('express');
-const { MongoClient } = require('mongodb');
+const { Pool } = require('pg');
 const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ---------- Конфигурация (всё из переменных окружения Railway) ----------
-const MONGO_URL = process.env.MONGO_URL;
-const DB_NAME = 'skechers';
+// База Postgres в Railway. Railway сам подставляет DATABASE_URL.
+const DATABASE_URL = process.env.DATABASE_URL;
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const NOTIFY_CHAT_ID = process.env.TELEGRAM_CHAT_ID; // куда слать уведомления
@@ -23,14 +23,25 @@ const MS_MATCH_FIELD = process.env.MOYSKLAD_MATCH_FIELD || 'article'; // article
 
 const TG = BOT_TOKEN ? `https://api.telegram.org/bot${BOT_TOKEN}` : null;
 
-let db;
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : false
+});
 
-async function connectDB() {
-  if (!MONGO_URL) throw new Error('Не задана переменная окружения MONGO_URL');
-  const client = new MongoClient(MONGO_URL);
-  await client.connect();
-  db = client.db(DB_NAME).collection('items');
-  console.log('✅ MongoDB подключена');
+async function initDB() {
+  if (!DATABASE_URL) throw new Error('Не задана переменная окружения DATABASE_URL (добавь базу Postgres в Railway)');
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS items (
+      article    TEXT PRIMARY KEY,
+      name       TEXT,
+      warehouse  TEXT DEFAULT '1',
+      floor      TEXT,
+      "row"      TEXT,
+      cell       TEXT,
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+  `);
+  console.log('✅ Postgres подключён, таблица items готова');
 }
 
 // ======================================================================
@@ -41,8 +52,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Получить все товары
 app.get('/api/items', async (req, res) => {
-  const items = await db.find({}).toArray();
-  res.json(items);
+  const { rows } = await pool.query('SELECT * FROM items ORDER BY created_at');
+  res.json(rows);
 });
 
 // Добавить товар
@@ -51,39 +62,47 @@ app.post('/api/items', async (req, res) => {
   if (!article) return res.status(400).json({ error: 'Артикул обязателен' });
 
   const key = article.toUpperCase();
-  const exists = await db.findOne({ article: key });
-  if (exists) return res.status(400).json({ error: 'Товар уже существует' });
+  const exists = await pool.query('SELECT 1 FROM items WHERE article = $1', [key]);
+  if (exists.rowCount) return res.status(400).json({ error: 'Товар уже существует' });
 
-  await db.insertOne({
-    article: key,
-    name: name || key,
-    warehouse: warehouse || '1',
-    floor: floor || null,
-    row: row || null,
-    cell: cell || null,
-    created_at: new Date().toISOString()
-  });
+  await pool.query(
+    `INSERT INTO items (article, name, warehouse, floor, "row", cell)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [key, name || key, warehouse || '1', floor || null, row || null, cell || null]
+  );
   notify(`➕ Добавлен товар\nАртикул: <b>${esc(key)}</b>\nНазвание: ${esc(name || key)}`);
   res.json({ success: true });
 });
 
 // Обновить товар
 app.patch('/api/items/:article', async (req, res) => {
-  await db.updateOne({ article: req.params.article }, { $set: req.body });
+  const allowed = ['name', 'warehouse', 'floor', 'row', 'cell'];
+  const sets = [];
+  const vals = [];
+  for (const k of allowed) {
+    if (k in req.body) {
+      vals.push(req.body[k]);
+      sets.push(`"${k}" = $${vals.length}`);
+    }
+  }
+  if (sets.length) {
+    vals.push(req.params.article);
+    await pool.query(`UPDATE items SET ${sets.join(', ')} WHERE article = $${vals.length}`, vals);
+  }
   notify(`✏️ Изменён товар <b>${esc(req.params.article)}</b>`);
   res.json({ success: true });
 });
 
 // Удалить товар
 app.delete('/api/items/:article', async (req, res) => {
-  await db.deleteOne({ article: req.params.article });
+  await pool.query('DELETE FROM items WHERE article = $1', [req.params.article]);
   notify(`🗑 Удалён товар <b>${esc(req.params.article)}</b>`);
   res.json({ success: true });
 });
 
 // Удалить все
 app.delete('/api/items', async (req, res) => {
-  await db.deleteMany({});
+  await pool.query('DELETE FROM items');
   notify('⚠️ Удалены <b>все</b> товары');
   res.json({ success: true });
 });
@@ -96,19 +115,13 @@ app.post('/api/items/import', async (req, res) => {
   let added = 0;
   for (const item of items) {
     const key = item.article.toUpperCase();
-    const exists = await db.findOne({ article: key });
-    if (!exists) {
-      await db.insertOne({
-        article: key,
-        name: item.name || key,
-        warehouse: '1',
-        floor: null,
-        row: null,
-        cell: null,
-        created_at: new Date().toISOString()
-      });
-      added++;
-    }
+    const r = await pool.query(
+      `INSERT INTO items (article, name)
+       VALUES ($1, $2)
+       ON CONFLICT (article) DO NOTHING`,
+      [key, item.name || key]
+    );
+    added += r.rowCount;
   }
 
   notify(`📥 Импорт: добавлено <b>${added}</b>, пропущено ${items.length - added}`);
@@ -259,7 +272,6 @@ const HELP = [
 async function handleCommand(chatId, text) {
   const [rawCmd, ...rest] = text.trim().split(/\s+/);
   const cmd = rawCmd.split('@')[0].toLowerCase(); // убрать @botname
-  const arg = rest.join(' ').trim();
   const article = (rest[0] || '').toUpperCase();
 
   switch (cmd) {
@@ -268,14 +280,15 @@ async function handleCommand(chatId, text) {
       return tgSend(chatId, HELP);
 
     case '/count': {
-      const n = await db.countDocuments({});
-      return tgSend(chatId, `Всего товаров: <b>${n}</b>`);
+      const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM items');
+      return tgSend(chatId, `Всего товаров: <b>${rows[0].n}</b>`);
     }
 
     case '/list': {
-      const items = await db.find({}).limit(50).toArray();
+      const { rows: items } = await pool.query('SELECT * FROM items ORDER BY created_at LIMIT 50');
       if (!items.length) return tgSend(chatId, 'Список пуст.');
-      const total = await db.countDocuments({});
+      const { rows: c } = await pool.query('SELECT COUNT(*)::int AS n FROM items');
+      const total = c[0].n;
       let msg = items.map(itemLine).join('\n\n');
       if (total > items.length) msg += `\n\n…и ещё ${total - items.length}. Используй /export для полного списка.`;
       return tgSend(chatId, msg);
@@ -283,40 +296,40 @@ async function handleCommand(chatId, text) {
 
     case '/find': {
       if (!article) return tgSend(chatId, 'Укажи артикул: /find SK-12345');
-      const it = await db.findOne({ article });
-      if (!it) return tgSend(chatId, `Товар <b>${esc(article)}</b> не найден.`);
-      return tgSend(chatId, itemLine(it));
+      const { rows } = await pool.query('SELECT * FROM items WHERE article = $1', [article]);
+      if (!rows.length) return tgSend(chatId, `Товар <b>${esc(article)}</b> не найден.`);
+      return tgSend(chatId, itemLine(rows[0]));
     }
 
     case '/add': {
       if (!article) return tgSend(chatId, 'Формат: /add АРТИКУЛ Название');
-      const exists = await db.findOne({ article });
-      if (exists) return tgSend(chatId, `Товар <b>${esc(article)}</b> уже существует.`);
       const name = rest.slice(1).join(' ') || article;
-      await db.insertOne({
-        article, name, warehouse: '1',
-        floor: null, row: null, cell: null,
-        created_at: new Date().toISOString()
-      });
-      return tgSend(chatId, `✅ Добавлен <b>${esc(article)}</b> — ${esc(name)}`);
+      const r = await pool.query(
+        `INSERT INTO items (article, name) VALUES ($1, $2)
+         ON CONFLICT (article) DO NOTHING`,
+        [article, name]
+      );
+      return tgSend(chatId, r.rowCount
+        ? `✅ Добавлен <b>${esc(article)}</b> — ${esc(name)}`
+        : `Товар <b>${esc(article)}</b> уже существует.`);
     }
 
     case '/del': {
       if (!article) return tgSend(chatId, 'Укажи артикул: /del SK-12345');
-      const r = await db.deleteOne({ article });
-      return tgSend(chatId, r.deletedCount
+      const r = await pool.query('DELETE FROM items WHERE article = $1', [article]);
+      return tgSend(chatId, r.rowCount
         ? `🗑 Удалён <b>${esc(article)}</b>`
         : `Товар <b>${esc(article)}</b> не найден.`);
     }
 
     case '/export': {
-      const items = await db.find({}).toArray();
+      const { rows: items } = await pool.query('SELECT * FROM items ORDER BY created_at');
       if (!items.length) return tgSend(chatId, 'Список пуст — экспортировать нечего.');
       const header = 'Артикул;Название;Склад;Этаж;Ряд;Ячейка;Дата\n';
-      const rows = items.map(it => [
+      const body = items.map(it => [
         it.article, it.name, it.warehouse, it.floor, it.row, it.cell, it.created_at
       ].map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(';')).join('\n');
-      const csv = '﻿' + header + rows; // BOM для корректной кириллицы в Excel
+      const csv = '﻿' + header + body; // BOM для корректной кириллицы в Excel
       return tgSendDocument(chatId, 'sklad.csv', csv, `Товаров: ${items.length}`);
     }
 
@@ -390,7 +403,7 @@ async function startBot() {
 // ======================================================================
 //  Старт
 // ======================================================================
-connectDB().then(() => {
+initDB().then(() => {
   app.listen(PORT, () => console.log(`✅ Сервер запущен на порту ${PORT}`));
   if (TG) startBot();
   else console.log('ℹ️ Telegram-бот выключен (нет TELEGRAM_BOT_TOKEN)');
