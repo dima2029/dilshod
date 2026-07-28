@@ -154,6 +154,17 @@ app.get('/api/moysklad/stores', (req, res) => {
   res.json({ stores: msStores });
 });
 
+// Диагностика синхронизации (что пошло не так)
+app.get('/api/moysklad/debug', (req, res) => {
+  res.json({
+    configured: msConfigured(),
+    updatedAt: msCatalog.updatedAt,
+    models: msModels.size,
+    storeNames: msStoreNames,
+    debug: msDebug
+  });
+});
+
 // ======================================================================
 //  Интеграция с МойСклад (остатки)
 // ======================================================================
@@ -279,10 +290,14 @@ async function msFetchStores() {
   }
 }
 
+let msDebug = { lastRun: null, storesFetched: [], perStore: [], errors: [] };
+
 async function msSyncAll() {
   const auth = msAuthHeader();
   if (!auth) return;
+  msDebug = { lastRun: new Date().toISOString(), storesFetched: [], perStore: [], errors: [] };
   await msFetchStores();
+  msDebug.storesFetched = msStores.map(s => s.name);
   const stores = msStores.length ? msStores : [{ id: null, name: 'Склад' }];
   const headers = { 'Authorization': auth, 'Accept': 'application/json;charset=utf-8' };
 
@@ -290,6 +305,7 @@ async function msSyncAll() {
   const groups = new Map(); // БАЗА(upper) -> { article, model, color, stock, byStore, price }
 
   for (const store of stores) {
+   let storeStock = 0;
    try {
     const storeHref = store.id ? `${MS_API}/entity/store/${store.id}` : null;
     let offset = 0;
@@ -300,6 +316,7 @@ async function msSyncAll() {
       if (!r.ok) {
         const body = await r.text().catch(() => '');
         console.error(`⚠️ МойСклад «${store.name}» ${r.status}: ${body.slice(0, 120)}`);
+        msDebug.errors.push(`${store.name}: HTTP ${r.status} ${body.slice(0, 100)}`);
         break; // пропускаем этот склад, продолжаем остальные
       }
       const data = await r.json();
@@ -307,6 +324,7 @@ async function msSyncAll() {
       for (const it of batch) {
         const st = Number(it.stock) || 0;
         if (st <= 0) continue; // на этом складе товара нет — пропускаем
+        storeStock += st;
         const base = baseArticle({ code: it.code, name: it.name, article: it.article });
         if (!base) continue;
         const baseU = base.toUpperCase();
@@ -338,8 +356,10 @@ async function msSyncAll() {
       if (batch.length < 1000 || offset >= size) break;
       await new Promise(res => setTimeout(res, 120)); // бережём лимиты МойСклад
     }
+    msDebug.perStore.push({ store: store.name, stock: storeStock });
    } catch (e) {
      console.error(`⚠️ МойСклад «${store.name}»: ${e.message}`);
+     msDebug.errors.push(`${store.name}: ${e.message}`);
    }
   }
 
