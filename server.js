@@ -213,6 +213,18 @@ app.get('/api/moysklad/find', (req, res) => {
 
 // Диагностика синхронизации (что пошло не так)
 app.get('/api/moysklad/debug', (req, res) => {
+  const art = String(req.query.article || '').trim().toUpperCase();
+  if (art) {
+    const hits = [];
+    for (const [id, inf] of msInfoAll) {
+      if ((inf.variantArticle || '').toUpperCase().includes(art) ||
+          inf.baseU.includes(art) || (inf.model || '').toUpperCase().includes(art)) {
+        hits.push({ id, base: inf.base, size: inf.size, variantArticle: inf.variantArticle, byStore: inf.byStore });
+        if (hits.length >= 40) break;
+      }
+    }
+    return res.json({ article: art, foundInInfo: hits.length, hits });
+  }
   res.json({
     configured: msConfigured(),
     updatedAt: msCatalog.updatedAt,
