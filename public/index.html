@@ -847,7 +847,8 @@ function renderMoysklad() {
             const upd = msData.updatedAt
                 ? new Date(msData.updatedAt).toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})
                 : '—';
-            info.innerHTML = `В наличии: <strong>${rows.length}</strong> товаров · обновлено в ${upd} · автообновление каждые 20 мин`;
+            const pieces = rows.reduce((s, r) => s + (Number(r.stock) || 0), 0);
+            info.innerHTML = `Позиций в наличии: <strong>${rows.length}</strong> · всего <strong>${pieces}</strong> шт · обновлено в ${upd} · автообновление каждые 20 мин`;
         }
     }
     const q = (document.getElementById('msSearch')?.value || '').trim().toUpperCase();
