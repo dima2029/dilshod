@@ -349,6 +349,9 @@
         .stk-n { font-weight: 700; color: var(--primary-dark); }
         .stk-x { color: var(--text-muted); }
         .stk-load { color: #bbb; }
+        .add-ms { background: var(--primary-light); color: var(--primary); border: 1px solid var(--primary); border-radius: 8px; padding: 0.3rem 0.6rem; font-size: 0.75rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+        .add-ms:active { transform: scale(0.96); }
+        .ms-added { color: var(--success); font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -538,7 +541,7 @@
                 </div>
                 <div class="table-wrap">
                     <table>
-                        <thead><tr><th>Артикул</th><th>Название</th><th>📊 Остаток</th><th>Доступно</th><th>Цена</th></tr></thead>
+                        <thead><tr><th>Артикул</th><th>Название</th><th>📊 Остаток</th><th>Доступно</th><th>Цена</th><th>В склад</th></tr></thead>
                         <tbody id="msBody"></tbody>
                     </table>
                 </div>
@@ -849,14 +852,38 @@ function renderMoysklad() {
     let list = rows;
     if (q) list = rows.filter(r =>
         (r.article || '').toUpperCase().includes(q) || (r.name || '').toUpperCase().includes(q));
-    if (!list.length) { body.innerHTML = emptyRow(5); return; }
-    body.innerHTML = list.slice(0, 500).map(r => `<tr>
+    if (!list.length) { body.innerHTML = emptyRow(6); return; }
+    body.innerHTML = list.slice(0, 500).map(r => {
+        const inStock = items.some(i => i.article === String(r.article).toUpperCase());
+        const btn = inStock
+            ? `<span class="ms-added">✅ На складе</span>`
+            : `<button class="action-btn add-ms" onclick="addFromMs('${jsStr(r.article)}')">➕ В склад</button>`;
+        return `<tr>
         <td><strong>${escHtml(r.article) || '—'}</strong></td>
         <td style="color:#555">${escHtml(r.name) || '—'}</td>
         <td class="stk-cell"><span class="${r.stock > 0 ? 'stk-n' : 'stk-x'}">${r.stock}</span></td>
         <td>${r.quantity}</td>
         <td>${r.price != null ? r.price : '—'}</td>
-    </tr>`).join('') + (list.length > 500 ? `<tr><td colspan="5" style="text-align:center;color:#888">…показаны первые 500 из ${list.length}. Уточните поиск.</td></tr>` : '');
+        <td>${btn}</td>
+    </tr>`; }).join('') + (list.length > 500 ? `<tr><td colspan="6" style="text-align:center;color:#888">…показаны первые 500 из ${list.length}. Уточните поиск.</td></tr>` : '');
+}
+
+// Строку-помощник для безопасной подстановки артикула в onclick
+function jsStr(s) {
+    return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+}
+
+// Добавить товар из каталога МойСклад в склад Фаровон (локальная база)
+async function addFromMs(article) {
+    const up = String(article).toUpperCase();
+    if (items.some(i => i.article === up)) { alert('ℹ️ Товар уже на складе'); return; }
+    const row = (msData.rows || []).find(r => String(r.article) === String(article));
+    const name = row ? row.name : up;
+    const r = await api('POST', '/items', { article: up, name, warehouse: '1' });
+    if (r.error) { alert('❌ ' + r.error); return; }
+    await loadItems();   // обновит таблицы складов и счётчики
+    renderMoysklad();    // кнопка станет «✅ На складе»
+    alert('✅ Добавлено в Фаровон: ' + up + '\nЛокацию (этаж/ряд/ячейку) можно задать во вкладке Фаровон.');
 }
 
 function renderAll() { renderFarovon(); renderWh('ovirBody','2',5); renderWh('ashanBody','3',5); renderStats(); triggerStockLoads(); }
