@@ -422,38 +422,37 @@ async function msSyncAll() {
     }
   } catch (e) { msDebug.errors.push('assortment ' + e.message); }
 
-  // 2) Остатки по складам — лёгкий отчёт, постранично (важно: строк может быть много)
-  let bystore = [];
+  // 2) Остатки по складам — полный отчёт /report/stock/bystore (нормальная постраничная загрузка)
+  const bystoreRows = [];
   try {
     let offset = 0;
-    const seen = new Set();
-    for (let p = 0; p < 1000; p++) {
-      const r = await fetch(`${MS_API}/report/stock/bystore/current?stockType=stock&limit=1000&offset=${offset}`, { headers });
-      if (!r.ok) { const b = await r.text().catch(() => ''); msDebug.errors.push(`bystore/current HTTP ${r.status} ${b.slice(0, 100)}`); break; }
-      const chunk = await r.json();
-      if (!Array.isArray(chunk) || !chunk.length) break;
-      let added = 0;
-      for (const e of chunk) {
-        const key = e.assortmentId + '|' + e.storeId;
-        if (seen.has(key)) continue;
-        seen.add(key); bystore.push(e); added++;
-      }
-      offset += chunk.length;
-      if (chunk.length < 1000 || added === 0) break; // последняя страница или offset игнорируется
+    for (let p = 0; p < 2000; p++) {
+      const r = await fetch(`${MS_API}/report/stock/bystore?limit=1000&offset=${offset}`, { headers });
+      if (!r.ok) { const b = await r.text().catch(() => ''); msDebug.errors.push(`bystore HTTP ${r.status} ${b.slice(0, 100)}`); break; }
+      const data = await r.json();
+      const rows = data.rows || [];
+      bystoreRows.push(...rows);
+      offset += rows.length;
+      const size = data.meta && data.meta.size ? data.meta.size : offset;
+      if (rows.length < 1000 || offset >= size) break;
     }
-    msDebug.bystoreCount = bystore.length;
-  } catch (e) { msDebug.errors.push('bystore/current ' + e.message); }
+    msDebug.bystoreCount = bystoreRows.length;
+    if (bystoreRows[0]) msDebug.perStore.push({ sample: bystoreRows[0] });
+  } catch (e) { msDebug.errors.push('bystore ' + e.message); }
 
-  if (Array.isArray(bystore) && bystore.length) {
-    msDebug.perStore.push({ sample: bystore[0] }); // образец формата для диагностики
-    for (const e of bystore) {
-      const inf = info.get(e.assortmentId);
+  if (bystoreRows.length) {
+    for (const row of bystoreRows) {
+      const id = String(row.meta && row.meta.href || '').split('?')[0].split('/').pop();
+      const inf = info.get(id);
       if (!inf) continue;
-      if (!storeById.has(e.storeId)) continue; // скрытый склад (напр. Резерв 2023)
-      const storeName = storeById.get(e.storeId);
-      const st = Number(e.stock) || 0;
-      inf.byStore[storeName] = (inf.byStore[storeName] || 0) + st; // полный индекс
-      addStock(inf, storeName, st);
+      for (const sb of (row.stockByStore || [])) {
+        const sName = sb.name || '';
+        if (!sName || MS_SKIP_STORES.includes(sName.toLowerCase())) continue; // скрытый склад
+        const st = Number(sb.stock) || 0;
+        if (st <= 0) continue;
+        inf.byStore[sName] = (inf.byStore[sName] || 0) + st; // полный индекс
+        addStock(inf, sName, st);
+      }
     }
     msStoreNames = msStores.map(s => s.name);
   } else {
