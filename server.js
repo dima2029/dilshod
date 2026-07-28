@@ -284,8 +284,8 @@ let msModels = new Map(); // МОДЕЛЬ(upper) -> { model, stock, byStore, col
 let msGroups = new Map(); // базовый артикул 402183L-BBLM (upper) -> цветовая группа
 let msInfoAll = new Map();// assortmentId -> инфо ВСЕХ товаров (в т.ч. с нулём) для поиска
 
-// Склады МойСклад, которые не показывать (по умолчанию «Резерв 2023»)
-const MS_SKIP_STORES = (process.env.MOYSKLAD_SKIP_STORES || 'Резерв 2023')
+// Склады МойСклад, которые не показывать (по умолчанию показываем все)
+const MS_SKIP_STORES = (process.env.MOYSKLAD_SKIP_STORES || '')
   .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
 function msPrice(it) {
