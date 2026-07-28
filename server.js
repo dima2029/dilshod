@@ -41,7 +41,14 @@ async function initDB() {
       created_at TIMESTAMPTZ DEFAULT now()
     );
   `);
-  console.log('✅ Postgres подключён, таблица items готова');
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bot_users (
+      chat_id    TEXT PRIMARY KEY,
+      store      TEXT,
+      updated_at TIMESTAMPTZ DEFAULT now()
+    );
+  `);
+  console.log('✅ Postgres подключён, таблицы готовы');
 }
 
 // ======================================================================
@@ -451,14 +458,131 @@ function isAllowed(chatId) {
   return TG_ADMINS.includes(String(chatId));
 }
 
+const WH_NAMES = { '1': 'Фаровон', '2': 'Ovir', '3': 'Ашан' };
 function itemLine(it) {
   const place = [
-    it.warehouse ? `склад ${it.warehouse}` : null,
+    it.warehouse ? `склад ${WH_NAMES[it.warehouse] || it.warehouse}` : null,
     it.floor ? `этаж ${it.floor}` : null,
     it.row ? `ряд ${it.row}` : null,
     it.cell ? `ячейка ${it.cell}` : null
   ].filter(Boolean).join(', ') || 'место не указано';
   return `📦 <b>${esc(it.article)}</b> — ${esc(it.name)}\n    ${esc(place)}`;
+}
+
+// ---------- Состояние и клавиатуры бота ----------
+const botMode = new Map();       // chatId -> 'ms' | 'local'
+const botStoreCache = new Map(); // chatId -> магазин
+const ALL_STORES = 'Все склады';
+
+async function getUserStore(chatId) {
+  if (botStoreCache.has(chatId)) return botStoreCache.get(chatId);
+  const { rows } = await pool.query('SELECT store FROM bot_users WHERE chat_id = $1', [String(chatId)]);
+  const store = rows.length ? rows[0].store : null;
+  botStoreCache.set(chatId, store);
+  return store;
+}
+async function setUserStore(chatId, store) {
+  await pool.query(
+    `INSERT INTO bot_users (chat_id, store, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (chat_id) DO UPDATE SET store = $2, updated_at = now()`,
+    [String(chatId), store]
+  );
+  botStoreCache.set(chatId, store);
+}
+
+function storeList() {
+  const names = msStoreNames.length ? msStoreNames.filter(n => n !== 'Всего') : [];
+  return [...names, ALL_STORES];
+}
+function storeKeyboard() {
+  return { inline_keyboard: storeList().map((n, i) => [{ text: '🏬 ' + n, callback_data: 'store:' + i }]) };
+}
+function storeByIndex(i) {
+  const list = storeList();
+  return list[i] != null ? list[i] : ALL_STORES;
+}
+function mainMenu() {
+  return { inline_keyboard: [
+    [{ text: '🔎 Найти остаток (МойСклад)', callback_data: 'menu:ms' }],
+    [{ text: '📦 Найти на складе (где лежит)', callback_data: 'menu:local' }],
+    [{ text: '🏬 Сменить магазин', callback_data: 'menu:store' }]
+  ]};
+}
+
+// Поиск по каталогу МойСклад (модель/цвет/артикул)
+function searchMsColors(query) {
+  const q = query.trim().toUpperCase();
+  if (!q) return [];
+  const res = [];
+  for (const m of msModels.values()) {
+    for (const c of m.colors.values()) {
+      if ((c.article || '').toUpperCase().includes(q) ||
+          (c.color || '').toUpperCase().includes(q) ||
+          (m.model || '').toUpperCase().includes(q)) {
+        res.push({ model: m.model, c });
+        if (res.length >= 60) return res;
+      }
+    }
+  }
+  return res;
+}
+
+// Ответ по остаткам МойСклад — только по магазину сотрудника
+function formatMsResult(query, store) {
+  const found = searchMsColors(query);
+  const all = !store || store === ALL_STORES;
+  const blocks = [];
+  for (const { c } of found) {
+    const total = all ? c.stock : (c.byStore[store] || 0);
+    if (total <= 0) continue;
+    const sizes = [...c.sizes.values()]
+      .map(s => ({ size: s.size, n: all ? s.stock : (s.byStore[store] || 0) }))
+      .filter(s => s.n > 0)
+      .sort((a, b) => (parseFloat(a.size) || 999) - (parseFloat(b.size) || 999));
+    const sizeStr = sizes.map(s => `${esc(s.size)}=${s.n}`).join('  ') || '—';
+    blocks.push(`📦 <b>${esc(c.article)}</b> — ${esc(c.color)}\nОстаток: <b>${total}</b> шт\nразмеры: ${sizeStr}`);
+    if (blocks.length >= 15) break;
+  }
+  if (!blocks.length) {
+    return all
+      ? `По «${esc(query)}» ничего не найдено.`
+      : `По «${esc(query)}» в магазине «${esc(store)}» товара нет.`;
+  }
+  const head = all ? '🔎 Остатки:' : `🔎 Остатки — <b>${esc(store)}</b>:`;
+  return head + '\n\n' + blocks.join('\n\n');
+}
+
+// Ответ по своей базе — где лежит на складе
+async function formatLocalResult(query) {
+  const { rows } = await pool.query(
+    `SELECT * FROM items WHERE article ILIKE $1 OR name ILIKE $1 ORDER BY article LIMIT 20`,
+    ['%' + query + '%']
+  );
+  if (!rows.length) return `В своей базе по «${esc(query)}» ничего не найдено.`;
+  return '📦 На складе:\n\n' + rows.map(itemLine).join('\n\n');
+}
+
+async function handleCallback(cq) {
+  const chatId = cq.message ? cq.message.chat.id : (cq.from && cq.from.id);
+  const data = cq.data || '';
+  await tgCall('answerCallbackQuery', { callback_query_id: cq.id }).catch(() => {});
+  if (data.startsWith('store:')) {
+    const name = storeByIndex(parseInt(data.slice(6), 10));
+    await setUserStore(chatId, name);
+    botMode.set(chatId, 'ms');
+    return tgSend(chatId, `✅ Твой магазин: <b>${esc(name)}</b>\n\nТеперь просто набирай артикул — покажу остаток по твоему магазину.`, { reply_markup: mainMenu() });
+  }
+  if (data === 'menu:ms') {
+    botMode.set(chatId, 'ms');
+    return tgSend(chatId, '🔎 Набирай артикул или модель (можно несколько подряд) — покажу остаток и размеры по твоему магазину.');
+  }
+  if (data === 'menu:local') {
+    botMode.set(chatId, 'local');
+    return tgSend(chatId, '📦 Набирай артикул — покажу, на каком складе он лежит (ряд/ячейка).');
+  }
+  if (data === 'menu:store') {
+    return tgSend(chatId, 'Выбери свой магазин:', { reply_markup: storeKeyboard() });
+  }
 }
 
 const HELP = [
@@ -564,19 +688,37 @@ async function handleCommand(chatId, text) {
 }
 
 async function handleUpdate(update) {
+  if (update.callback_query) return handleCallback(update.callback_query);
+
   const msg = update.message || update.edited_message;
   if (!msg || !msg.text) return;
   const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const store = await getUserStore(chatId);
 
-  if (!isAllowed(chatId)) {
-    await tgSend(chatId, `⛔ Нет доступа. Ваш chat_id: <code>${chatId}</code>`);
-    return;
+  // Команды
+  if (text.startsWith('/')) {
+    const cmd = text.split(/\s+/)[0].split('@')[0].toLowerCase();
+    if (cmd === '/start' || cmd === '/menu' || cmd === '/help') {
+      if (!store) return tgSend(chatId, '👋 Добро пожаловать в склад Skechers!\n\nТы сотрудник какого магазина?', { reply_markup: storeKeyboard() });
+      return tgSend(chatId, `Твой магазин: <b>${esc(store)}</b>\nВыбери действие или просто набери артикул:`, { reply_markup: mainMenu() });
+    }
+    // Управляющие/старые команды — только администратору
+    if (!isAllowed(chatId)) return tgSend(chatId, '⛔ Эта команда только для администратора. Нажми /start для меню.');
+    return handleCommand(chatId, text);
   }
-  if (msg.text.startsWith('/')) {
-    await handleCommand(chatId, msg.text);
-  } else {
-    await tgSend(chatId, 'Отправь команду. /help — список.');
+
+  // Не выбран магазин — просим выбрать
+  if (!store) {
+    return tgSend(chatId, '👋 Сначала выбери свой магазин:', { reply_markup: storeKeyboard() });
   }
+
+  // Обычный текст = поисковый запрос (режим по умолчанию — остатки МойСклад)
+  const mode = botMode.get(chatId) || 'ms';
+  if (mode === 'local') {
+    return tgSend(chatId, await formatLocalResult(text), { reply_markup: mainMenu() });
+  }
+  return tgSend(chatId, formatMsResult(text, store), { reply_markup: mainMenu() });
 }
 
 async function startBot() {
