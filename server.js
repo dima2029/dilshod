@@ -298,77 +298,85 @@ async function msSyncAll() {
   msDebug = { lastRun: new Date().toISOString(), storesFetched: [], perStore: [], errors: [] };
   await msFetchStores();
   msDebug.storesFetched = msStores.map(s => s.name);
-  const stores = msStores.length ? msStores : [{ id: null, name: 'Склад' }];
   const headers = { 'Authorization': auth, 'Accept': 'application/json;charset=utf-8' };
+  const storeById = new Map(msStores.map(s => [s.id, s.name])); // только видимые склады
 
-  const models = new Map(); // МОДЕЛЬ(upper) -> { model, stock, byStore, colors:Map }
-  const groups = new Map(); // БАЗА(upper) -> { article, model, color, stock, byStore, price }
+  const models = new Map();
+  const groups = new Map();
 
-  for (const store of stores) {
-   let storeStock = 0;
-   try {
-    const storeHref = store.id ? `${MS_API}/entity/store/${store.id}` : null;
+  function addStock(inf, storeName, st) {
+    if (st <= 0) return;
+    let g = groups.get(inf.baseU);
+    if (!g) { g = { article: inf.base, model: inf.model, color: inf.color, stock: 0, byStore: {}, price: inf.price }; groups.set(inf.baseU, g); }
+    g.stock += st; g.byStore[storeName] = (g.byStore[storeName] || 0) + st;
+    if (g.price == null && inf.price != null) g.price = inf.price;
+
+    const mU = inf.model.toUpperCase();
+    let m = models.get(mU);
+    if (!m) { m = { model: inf.model, stock: 0, byStore: {}, colors: new Map() }; models.set(mU, m); }
+    m.stock += st; m.byStore[storeName] = (m.byStore[storeName] || 0) + st;
+    let c = m.colors.get(inf.baseU);
+    if (!c) { c = { article: inf.base, color: inf.color, stock: 0, byStore: {}, price: inf.price }; m.colors.set(inf.baseU, c); }
+    c.stock += st; c.byStore[storeName] = (c.byStore[storeName] || 0) + st;
+    if (c.price == null && inf.price != null) c.price = inf.price;
+  }
+
+  // 1) Один проход по каталогу: id -> инфо (артикул/модель/цвет/цена/общий остаток)
+  const info = new Map();
+  try {
     let offset = 0;
     for (let page = 0; page < 200; page++) {
-      let url = `${MS_API}/entity/assortment?limit=1000&offset=${offset}`;
-      if (storeHref) url += `&filter=stockStore=${storeHref}`;
-      const r = await fetch(url, { headers });
+      const r = await fetch(`${MS_API}/entity/assortment?limit=1000&offset=${offset}`, { headers });
       if (!r.ok) {
         const body = await r.text().catch(() => '');
-        console.error(`⚠️ МойСклад «${store.name}» ${r.status}: ${body.slice(0, 120)}`);
-        msDebug.errors.push(`${store.name}: HTTP ${r.status} ${body.slice(0, 100)}`);
-        break; // пропускаем этот склад, продолжаем остальные
+        msDebug.errors.push(`assortment HTTP ${r.status} ${body.slice(0, 100)}`);
+        break;
       }
       const data = await r.json();
       const batch = data.rows || [];
       for (const it of batch) {
-        const st = Number(it.stock) || 0;
-        if (st <= 0) continue; // на этом складе товара нет — пропускаем
-        storeStock += st;
+        const id = String(it.meta && it.meta.href || '').split('?')[0].split('/').pop();
         const base = baseArticle({ code: it.code, name: it.name, article: it.article });
-        if (!base) continue;
-        const baseU = base.toUpperCase();
-        const model = modelKey(base);
-        const color = colorFromName({ name: it.name }) || base;
-        const price = msPrice(it);
-
-        // цветовая группа (для /api/stock и кнопки «В склад»)
-        let g = groups.get(baseU);
-        if (!g) { g = { article: base, model, color, stock: 0, byStore: {}, price }; groups.set(baseU, g); }
-        g.stock += st;
-        g.byStore[store.name] = (g.byStore[store.name] || 0) + st;
-        if (g.price == null && price != null) g.price = price;
-
-        // модель -> цвета
-        const modelU = model.toUpperCase();
-        let m = models.get(modelU);
-        if (!m) { m = { model, stock: 0, byStore: {}, colors: new Map() }; models.set(modelU, m); }
-        m.stock += st;
-        m.byStore[store.name] = (m.byStore[store.name] || 0) + st;
-        let c = m.colors.get(baseU);
-        if (!c) { c = { article: base, color, stock: 0, byStore: {}, price }; m.colors.set(baseU, c); }
-        c.stock += st;
-        c.byStore[store.name] = (c.byStore[store.name] || 0) + st;
-        if (c.price == null && price != null) c.price = price;
+        if (!id || !base) continue;
+        info.set(id, {
+          base, baseU: base.toUpperCase(), model: modelKey(base),
+          color: colorFromName({ name: it.name }) || base,
+          price: msPrice(it), totalStock: Number(it.stock) || 0
+        });
       }
       offset += batch.length;
       const size = data.meta && data.meta.size ? data.meta.size : offset;
       if (batch.length < 1000 || offset >= size) break;
-      await new Promise(res => setTimeout(res, 120)); // бережём лимиты МойСклад
     }
-    msDebug.perStore.push({ store: store.name, stock: storeStock });
-   } catch (e) {
-     console.error(`⚠️ МойСклад «${store.name}»: ${e.message}`);
-     msDebug.errors.push(`${store.name}: ${e.message}`);
-   }
+  } catch (e) { msDebug.errors.push('assortment ' + e.message); }
+
+  // 2) Лёгкий отчёт остатков по складам
+  let bystore = null;
+  try {
+    const r = await fetch(`${MS_API}/report/stock/bystore/current?stockType=stock`, { headers });
+    if (r.ok) bystore = await r.json();
+    else { const b = await r.text().catch(()=> ''); msDebug.errors.push(`bystore/current HTTP ${r.status} ${b.slice(0,100)}`); }
+  } catch (e) { msDebug.errors.push('bystore/current ' + e.message); }
+
+  if (Array.isArray(bystore) && bystore.length) {
+    msDebug.perStore.push({ sample: bystore[0] }); // образец формата для диагностики
+    for (const e of bystore) {
+      const inf = info.get(e.assortmentId);
+      if (!inf) continue;
+      if (!storeById.has(e.storeId)) continue; // скрытый склад (напр. Резерв 2023)
+      addStock(inf, storeById.get(e.storeId), Number(e.stock) || 0);
+    }
+    msStoreNames = msStores.map(s => s.name);
+  } else {
+    // Резерв: если отчёт по складам недоступен — показываем общий остаток
+    for (const inf of info.values()) addStock(inf, 'Всего', inf.totalStock);
+    msStoreNames = ['Всего'];
   }
 
-  // Итог применяем всегда — даже при частичной ошибке (без вечного «синхронизируется»)
-  msStoreNames = stores.map(s => s.name);
   msModels = models;
   msGroups = groups;
   msCatalog = { updatedAt: new Date().toISOString(), count: models.size };
-  console.log(`🔄 МойСклад: складов ${stores.length}, моделей ${models.size}, цветов ${groups.size}`);
+  console.log(`🔄 МойСклад: складов ${msStoreNames.length}, моделей ${models.size}, цветов ${groups.size}`);
 }
 
 // ======================================================================
