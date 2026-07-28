@@ -422,12 +422,26 @@ async function msSyncAll() {
     }
   } catch (e) { msDebug.errors.push('assortment ' + e.message); }
 
-  // 2) Лёгкий отчёт остатков по складам
-  let bystore = null;
+  // 2) Остатки по складам — лёгкий отчёт, постранично (важно: строк может быть много)
+  let bystore = [];
   try {
-    const r = await fetch(`${MS_API}/report/stock/bystore/current?stockType=stock`, { headers });
-    if (r.ok) bystore = await r.json();
-    else { const b = await r.text().catch(()=> ''); msDebug.errors.push(`bystore/current HTTP ${r.status} ${b.slice(0,100)}`); }
+    let offset = 0;
+    const seen = new Set();
+    for (let p = 0; p < 1000; p++) {
+      const r = await fetch(`${MS_API}/report/stock/bystore/current?stockType=stock&limit=1000&offset=${offset}`, { headers });
+      if (!r.ok) { const b = await r.text().catch(() => ''); msDebug.errors.push(`bystore/current HTTP ${r.status} ${b.slice(0, 100)}`); break; }
+      const chunk = await r.json();
+      if (!Array.isArray(chunk) || !chunk.length) break;
+      let added = 0;
+      for (const e of chunk) {
+        const key = e.assortmentId + '|' + e.storeId;
+        if (seen.has(key)) continue;
+        seen.add(key); bystore.push(e); added++;
+      }
+      offset += chunk.length;
+      if (chunk.length < 1000 || added === 0) break; // последняя страница или offset игнорируется
+    }
+    msDebug.bystoreCount = bystore.length;
   } catch (e) { msDebug.errors.push('bystore/current ' + e.message); }
 
   if (Array.isArray(bystore) && bystore.length) {
