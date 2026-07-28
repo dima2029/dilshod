@@ -142,9 +142,12 @@ app.get('/api/stock/:article', async (req, res) => {
   }
 });
 
-// Весь каталог МойСклад (артикулы + остатки), обновляется каждые 20 минут
+// Каталог МойСклад — только товары, у которых есть остаток (stock > 0).
+// Обновляется синхронизацией каждые 20 минут: появился приход — товар появится, ушёл в 0 — исчез.
 app.get('/api/moysklad', (req, res) => {
-  res.json(msCatalog);
+  const all = req.query.all === '1'; // ?all=1 — вернуть вообще всё (на всякий случай)
+  const rows = all ? msCatalog.rows : msCatalog.rows.filter(r => (r.stock || 0) > 0);
+  res.json({ updatedAt: msCatalog.updatedAt, count: rows.length, rows });
 });
 
 // ======================================================================

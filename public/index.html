@@ -840,12 +840,14 @@ function renderMoysklad() {
     if (bsMs) bsMs.textContent = rows.length;
     if (info) {
         if (!rows.length) {
-            info.textContent = 'Каталог пуст или МойСклад ещё синхронизируется…';
+            info.textContent = msData.updatedAt
+                ? 'Сейчас нет товаров с остатком. Появится приход — товар покажется автоматически.'
+                : 'МойСклад ещё синхронизируется…';
         } else {
             const upd = msData.updatedAt
                 ? new Date(msData.updatedAt).toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})
                 : '—';
-            info.innerHTML = `Товаров: <strong>${rows.length}</strong> · обновлено в ${upd} · автообновление каждые 20 мин`;
+            info.innerHTML = `В наличии: <strong>${rows.length}</strong> товаров · обновлено в ${upd} · автообновление каждые 20 мин`;
         }
     }
     const q = (document.getElementById('msSearch')?.value || '').trim().toUpperCase();
