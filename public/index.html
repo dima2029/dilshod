@@ -387,6 +387,7 @@
     <button class="tab" onclick="switchTab('farovon',this)">🏢 Фаровон</button>
     <button class="tab" onclick="switchTab('ovir',this)">🏢 Ovir</button>
     <button class="tab" onclick="switchTab('ashan',this)">🏢 Ашан</button>
+    <button class="tab" onclick="switchTab('moysklad',this)">📊 Остатки</button>
     <button class="tab" onclick="switchTab('settings',this)">⚙️ Настройки</button>
 </div>
 
@@ -522,6 +523,28 @@
             </div>
         </div>
 
+        <!-- ОСТАТКИ МОЙСКЛАД -->
+        <div id="moysklad" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">📊 Остатки из МойСклад</span>
+                    <div class="card-actions">
+                        <button class="btn-outline" onclick="loadMoysklad(true)">🔄 Обновить</button>
+                    </div>
+                </div>
+                <div class="info-box" id="msInfo">Загрузка каталога…</div>
+                <div class="form-group" style="margin-bottom:0.75rem;">
+                    <input type="text" id="msSearch" placeholder="🔍 Поиск по артикулу или названию..." oninput="renderMoysklad()">
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Артикул</th><th>Название</th><th>📊 Остаток</th><th>Доступно</th><th>Цена</th></tr></thead>
+                        <tbody id="msBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <!-- НАСТРОЙКИ -->
         <div id="settings" class="tab-content">
             <div class="stats-grid">
@@ -580,6 +603,7 @@
     <div class="wh-sheet-item" onclick="bnSwitchWh('farovon')">🏢 Фаровон <span class="s-count" id="bs-far">0</span></div>
     <div class="wh-sheet-item" onclick="bnSwitchWh('ovir')">🏢 Skechers Ovir <span class="s-count" id="bs-ovir">0</span></div>
     <div class="wh-sheet-item" onclick="bnSwitchWh('ashan')">🏢 Skechers Ашан <span class="s-count" id="bs-ashan">0</span></div>
+    <div class="wh-sheet-item" onclick="closeWhSheet(); bnSwitch('moysklad','bn-wh')">📊 Остатки МойСклад <span class="s-count" id="bs-ms">0</span></div>
     <button style="width:100%;margin-top:6px;padding:0.75rem;border-radius:10px;border:1px solid var(--border);background:var(--bg);font-size:0.9rem;cursor:pointer;" onclick="closeWhSheet()">Отмена</button>
 </div>
 
@@ -652,6 +676,7 @@ function checkPassword() {
         document.getElementById('loginScreen').style.display = 'none';
         document.getElementById('mainApp').style.display = 'block';
         loadItems();
+        loadMoysklad();
     } else {
         errorEl.style.display = 'block';
         document.getElementById('passwordInput').value = '';
@@ -688,6 +713,9 @@ async function loadItems() {
 }
 
 setInterval(() => { if (sessionStorage.getItem('auth') === '1') loadItems(); }, 3000);
+// Каталог МойСклад: первая загрузка + опрос сервера раз в минуту (сервер сам синхронизируется каждые 20 мин)
+if (sessionStorage.getItem('auth') === '1') loadMoysklad();
+setInterval(() => { if (sessionStorage.getItem('auth') === '1') loadMoysklad(); }, 60000);
 
 function switchTab(name, el) {
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
@@ -783,6 +811,52 @@ function triggerStockLoads() {
 function refreshStocks() {
     for (const k in stockCache) delete stockCache[k];
     renderAll();
+}
+
+// ===== Каталог МойСклад (весь список, синхронизируется сервером каждые 20 мин) =====
+let msData = { updatedAt: null, rows: [] };
+
+function escHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+}
+
+async function loadMoysklad() {
+    try {
+        const r = await fetch('/api/moysklad');
+        msData = await r.json();
+    } catch { /* оставляем прежние данные */ }
+    renderMoysklad();
+}
+
+function renderMoysklad() {
+    const info = document.getElementById('msInfo');
+    const body = document.getElementById('msBody');
+    if (!body) return;
+    const rows = (msData && msData.rows) ? msData.rows : [];
+    const bsMs = document.getElementById('bs-ms');
+    if (bsMs) bsMs.textContent = rows.length;
+    if (info) {
+        if (!rows.length) {
+            info.textContent = 'Каталог пуст или МойСклад ещё синхронизируется…';
+        } else {
+            const upd = msData.updatedAt
+                ? new Date(msData.updatedAt).toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})
+                : '—';
+            info.innerHTML = `Товаров: <strong>${rows.length}</strong> · обновлено в ${upd} · автообновление каждые 20 мин`;
+        }
+    }
+    const q = (document.getElementById('msSearch')?.value || '').trim().toUpperCase();
+    let list = rows;
+    if (q) list = rows.filter(r =>
+        (r.article || '').toUpperCase().includes(q) || (r.name || '').toUpperCase().includes(q));
+    if (!list.length) { body.innerHTML = emptyRow(5); return; }
+    body.innerHTML = list.slice(0, 500).map(r => `<tr>
+        <td><strong>${escHtml(r.article) || '—'}</strong></td>
+        <td style="color:#555">${escHtml(r.name) || '—'}</td>
+        <td class="stk-cell"><span class="${r.stock > 0 ? 'stk-n' : 'stk-x'}">${r.stock}</span></td>
+        <td>${r.quantity}</td>
+        <td>${r.price != null ? r.price : '—'}</td>
+    </tr>`).join('') + (list.length > 500 ? `<tr><td colspan="5" style="text-align:center;color:#888">…показаны первые 500 из ${list.length}. Уточните поиск.</td></tr>` : '');
 }
 
 function renderAll() { renderFarovon(); renderWh('ovirBody','2',5); renderWh('ashanBody','3',5); renderStats(); triggerStockLoads(); }

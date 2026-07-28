@@ -128,8 +128,11 @@ app.post('/api/items/import', async (req, res) => {
   res.json({ success: true, added, skipped: items.length - added });
 });
 
-// Остаток по артикулу (для сайта) — данные из МойСклад
+// Остаток по артикулу (для сайта) — сначала из синхронизированного каталога, иначе живой запрос
 app.get('/api/stock/:article', async (req, res) => {
+  const key = String(req.params.article).toUpperCase();
+  const cached = msIndex.get(key);
+  if (cached) return res.json(cached);
   try {
     const stock = await fetchStock(req.params.article);
     if (!stock) return res.status(404).json({ error: 'Не найдено в МойСклад' });
@@ -137,6 +140,11 @@ app.get('/api/stock/:article', async (req, res) => {
   } catch (e) {
     res.status(502).json({ error: e.message });
   }
+});
+
+// Весь каталог МойСклад (артикулы + остатки), обновляется каждые 20 минут
+app.get('/api/moysklad', (req, res) => {
+  res.json(msCatalog);
 });
 
 // ======================================================================
@@ -192,6 +200,54 @@ async function fetchStock(article) {
     quantity: rowItem.quantity ?? 0,  // доступно
     price
   };
+}
+
+// ---- Полная синхронизация каталога МойСклад (каждые 20 минут) ----
+let msCatalog = { updatedAt: null, count: 0, rows: [] };
+let msIndex = new Map(); // АРТИКУЛ(upper) -> строка
+
+function msPrice(it) {
+  return Array.isArray(it.salePrices) && it.salePrices[0]
+    ? it.salePrices[0].value / 100 : null;
+}
+
+async function msSyncAll() {
+  const auth = msAuthHeader();
+  if (!auth) return;
+  const limit = 1000;
+  let offset = 0;
+  const rows = [];
+  for (let page = 0; page < 200; page++) {
+    const url = `${MS_API}/entity/assortment?limit=${limit}&offset=${offset}`;
+    const r = await fetch(url, {
+      headers: { 'Authorization': auth, 'Accept': 'application/json;charset=utf-8' }
+    });
+    if (!r.ok) {
+      const body = await r.text().catch(() => '');
+      console.error(`⚠️ МойСклад sync ${r.status}: ${body.slice(0, 150)}`);
+      return; // не затираем уже загруженный каталог
+    }
+    const data = await r.json();
+    const batch = data.rows || [];
+    for (const it of batch) {
+      rows.push({
+        article: it.article || it.code || '',
+        name: it.name || '',
+        code: it.code || '',
+        stock: it.stock ?? 0,
+        reserve: it.reserve ?? 0,
+        inTransit: it.inTransit ?? 0,
+        quantity: it.quantity ?? 0,
+        price: msPrice(it)
+      });
+    }
+    offset += batch.length;
+    const size = data.meta && data.meta.size ? data.meta.size : offset;
+    if (batch.length < limit || offset >= size) break;
+  }
+  msCatalog = { updatedAt: new Date().toISOString(), count: rows.length, rows };
+  msIndex = new Map(rows.map(r => [String(r.article).toUpperCase(), r]));
+  console.log(`🔄 МойСклад: синхронизировано товаров — ${rows.length}`);
 }
 
 // ======================================================================
@@ -407,6 +463,14 @@ initDB().then(() => {
   app.listen(PORT, () => console.log(`✅ Сервер запущен на порту ${PORT}`));
   if (TG) startBot();
   else console.log('ℹ️ Telegram-бот выключен (нет TELEGRAM_BOT_TOKEN)');
+
+  // Синхронизация каталога МойСклад: сразу при старте и далее каждые 20 минут
+  if (msConfigured()) {
+    msSyncAll().catch(e => console.error('ms sync', e.message));
+    setInterval(() => msSyncAll().catch(e => console.error('ms sync', e.message)), 20 * 60 * 1000);
+  } else {
+    console.log('ℹ️ Синхронизация МойСклад выключена (нет доступа)');
+  }
 }).catch(err => {
   console.error('❌ Ошибка запуска:', err.message);
   process.exit(1);
