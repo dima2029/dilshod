@@ -148,6 +148,11 @@ app.get('/api/moysklad', (req, res) => {
   res.json({ updatedAt: msCatalog.updatedAt, count: rows.length, rows });
 });
 
+// Список складов МойСклад — чтобы связать их со складами на сайте
+app.get('/api/moysklad/stores', (req, res) => {
+  res.json({ stores: msStores });
+});
+
 // ======================================================================
 //  Интеграция с МойСклад (остатки)
 // ======================================================================
@@ -235,9 +240,31 @@ async function getStock(article) {
   return await fetchStock(article);
 }
 
+// Список складов МойСклад (Главный, Ашан, Валаматзода, Фаровон и т.д.)
+let msStores = [];
+async function msFetchStores() {
+  const auth = msAuthHeader();
+  if (!auth) return;
+  try {
+    const r = await fetch(`${MS_API}/entity/store?limit=100`, {
+      headers: { 'Authorization': auth, 'Accept': 'application/json;charset=utf-8' }
+    });
+    if (!r.ok) { console.error(`⚠️ МойСклад stores ${r.status}`); return; }
+    const data = await r.json();
+    msStores = (data.rows || []).map(s => ({
+      id: String(s.meta && s.meta.href || '').split('/').pop(),
+      name: s.name || ''
+    }));
+    console.log(`🏬 МойСклад склады: ${msStores.map(s => s.name).join(', ')}`);
+  } catch (e) {
+    console.error('ms stores', e.message);
+  }
+}
+
 async function msSyncAll() {
   const auth = msAuthHeader();
   if (!auth) return;
+  await msFetchStores();
   const limit = 1000;
   let offset = 0;
   const rows = [];
