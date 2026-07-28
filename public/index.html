@@ -386,8 +386,6 @@
 </div>
 
 <div class="tabs">
-    <button class="tab" onclick="switchTab('import',this)">📥 Импорт</button>
-    <button class="tab" onclick="switchTab('add',this)">➕ Добавить</button>
     <button class="tab active" onclick="switchTab('search',this)">🔍 Поиск</button>
     <button class="tab" onclick="switchTab('farovon',this)">🏢 Фаровон</button>
     <button class="tab" onclick="switchTab('ovir',this)">🏢 Ovir</button>
@@ -573,14 +571,6 @@
 <!-- BOTTOM NAV (mobile) -->
 <div class="bottom-nav">
     <div class="bottom-nav-inner">
-        <button class="bn-item" id="bn-import" onclick="bnSwitch('import','bn-import')">
-            <div class="bn-icon-wrap"><span class="bn-icon">📥</span></div>
-            <span class="bn-label">Импорт</span>
-        </button>
-        <button class="bn-item" id="bn-add" onclick="bnSwitch('add','bn-add')">
-            <div class="bn-icon-wrap"><span class="bn-icon">➕</span></div>
-            <span class="bn-label">Добавить</span>
-        </button>
         <button class="bn-item active" id="bn-search" onclick="bnSwitch('search','bn-search')">
             <div class="bn-icon-wrap"><span class="bn-icon">🔍</span></div>
             <span class="bn-label">Поиск</span>
@@ -725,7 +715,7 @@ function switchTab(name, el) {
 }
 
 function switchTabByName(name) {
-    const names = ['import','add','search','farovon','ovir','ashan','settings'];
+    const names = ['search','farovon','ovir','ashan','moysklad','settings'];
     const idx = names.indexOf(name);
     const tabs = document.querySelectorAll('.tab');
     if (idx >= 0 && tabs[idx]) switchTab(name, tabs[idx]);
@@ -735,7 +725,7 @@ function bnSwitch(name, bnId) {
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.getElementById(name).classList.add('active');
-    const tabNames = ['import','add','search','farovon','ovir','ashan','settings'];
+    const tabNames = ['search','farovon','ovir','ashan','moysklad','settings'];
     const tabs = document.querySelectorAll('.tab');
     const idx = tabNames.indexOf(name);
     if (idx >= 0 && tabs[idx]) tabs[idx].classList.add('active');
