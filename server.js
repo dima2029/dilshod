@@ -128,13 +128,10 @@ app.post('/api/items/import', async (req, res) => {
   res.json({ success: true, added, skipped: items.length - added });
 });
 
-// Остаток по артикулу (для сайта) — сначала из синхронизированного каталога, иначе живой запрос
+// Остаток по артикулу (для сайта) — группа/размер из каталога, иначе живой запрос
 app.get('/api/stock/:article', async (req, res) => {
-  const key = String(req.params.article).toUpperCase();
-  const cached = msIndex.get(key);
-  if (cached) return res.json(cached);
   try {
-    const stock = await fetchStock(req.params.article);
+    const stock = await getStock(req.params.article);
     if (!stock) return res.status(404).json({ error: 'Не найдено в МойСклад' });
     res.json(stock);
   } catch (e) {
@@ -142,11 +139,12 @@ app.get('/api/stock/:article', async (req, res) => {
   }
 });
 
-// Каталог МойСклад — только товары, у которых есть остаток (stock > 0).
-// Обновляется синхронизацией каждые 20 минут: появился приход — товар появится, ушёл в 0 — исчез.
+// Каталог МойСклад — сгруппирован по артикулу (сумма остатков по размерам),
+// только товары с остатком > 0. Обновляется синхронизацией каждые 20 минут.
 app.get('/api/moysklad', (req, res) => {
-  const all = req.query.all === '1'; // ?all=1 — вернуть вообще всё (на всякий случай)
-  const rows = all ? msCatalog.rows : msCatalog.rows.filter(r => (r.stock || 0) > 0);
+  const all = req.query.all === '1'; // ?all=1 — включая нулевые остатки
+  const groups = [...msGroups.values()];
+  const rows = all ? groups : groups.filter(r => (r.stock || 0) > 0);
   res.json({ updatedAt: msCatalog.updatedAt, count: rows.length, rows });
 });
 
@@ -207,11 +205,34 @@ async function fetchStock(article) {
 
 // ---- Полная синхронизация каталога МойСклад (каждые 20 минут) ----
 let msCatalog = { updatedAt: null, count: 0, rows: [] };
-let msIndex = new Map(); // АРТИКУЛ(upper) -> строка
+let msIndex = new Map();  // код размера (upper) -> строка размера
+let msGroups = new Map(); // базовый артикул 402183L-BBLM (upper) -> суммарная строка
 
 function msPrice(it) {
   return Array.isArray(it.salePrices) && it.salePrices[0]
     ? it.salePrices[0].value / 100 : null;
+}
+
+// Базовый артикул: "402183L-BBLM (32, BLUE BLACK LIME)" -> "402183L-BBLM"
+function baseArticle(r) {
+  const src = r.code || r.name || r.article || '';
+  return String(src).split(/\s*\(/)[0].trim();
+}
+
+// Цвет из названия: "402183L-BBLM (32, BLUE BLACK LIME)" -> "BLUE BLACK LIME"
+function colorFromName(r) {
+  const m = String(r.name || '').match(/\(([^)]*)\)/);
+  if (!m) return '';
+  const parts = m[1].split(',');
+  return (parts.length > 1 ? parts.slice(1).join(',') : m[1]).trim();
+}
+
+// Остаток по артикулу: сначала группа (сумма размеров), потом размер, потом живой запрос
+async function getStock(article) {
+  const key = String(article).toUpperCase();
+  if (msGroups.has(key)) return msGroups.get(key);
+  if (msIndex.has(key)) return msIndex.get(key);
+  return await fetchStock(article);
 }
 
 async function msSyncAll() {
@@ -250,7 +271,28 @@ async function msSyncAll() {
   }
   msCatalog = { updatedAt: new Date().toISOString(), count: rows.length, rows };
   msIndex = new Map(rows.map(r => [String(r.article).toUpperCase(), r]));
-  console.log(`🔄 МойСклад: синхронизировано товаров — ${rows.length}`);
+
+  // Группировка по базовому артикулу (все размеры одного 402183L-BBLM в одну строку)
+  const groups = new Map();
+  for (const r of rows) {
+    const base = baseArticle(r);
+    if (!base) continue;
+    const key = base.toUpperCase();
+    let g = groups.get(key);
+    if (!g) {
+      g = { article: base, name: colorFromName(r) || base, stock: 0, reserve: 0, inTransit: 0, quantity: 0, price: r.price };
+      groups.set(key, g);
+    }
+    g.stock     += Number(r.stock) || 0;
+    g.reserve   += Number(r.reserve) || 0;
+    g.inTransit += Number(r.inTransit) || 0;
+    g.quantity  += Number(r.quantity) || 0;
+    if (g.price == null && r.price != null) g.price = r.price;
+    if ((!g.name || g.name === base) && colorFromName(r)) g.name = colorFromName(r);
+  }
+  msGroups = groups;
+
+  console.log(`🔄 МойСклад: синхронизировано размеров — ${rows.length}, артикулов — ${groups.size}`);
 }
 
 // ======================================================================
@@ -397,7 +439,7 @@ async function handleCommand(chatId, text) {
       if (!article) return tgSend(chatId, 'Укажи артикул: /ostatki SK-12345');
       await tgSend(chatId, '⏳ Запрашиваю остаток…');
       try {
-        const s = await fetchStock(article);
+        const s = await getStock(article);
         if (!s) return tgSend(chatId, `В МойСклад ничего не найдено по <b>${esc(article)}</b>.`);
         const lines = [
           `📊 <b>${esc(s.name)}</b> (${esc(s.article)})`,
