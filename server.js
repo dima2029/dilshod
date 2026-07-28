@@ -142,10 +142,11 @@ app.get('/api/stock/:article', async (req, res) => {
 // Каталог МойСклад — сгруппирован по артикулу (сумма остатков по размерам),
 // только товары с остатком > 0. Обновляется синхронизацией каждые 20 минут.
 app.get('/api/moysklad', (req, res) => {
-  const all = req.query.all === '1'; // ?all=1 — включая нулевые остатки
-  const groups = [...msGroups.values()];
-  const rows = all ? groups : groups.filter(r => (r.stock || 0) > 0);
-  res.json({ updatedAt: msCatalog.updatedAt, count: rows.length, rows });
+  const rows = [...msModels.values()]
+    .map(m => ({ model: m.model, stock: m.stock, byStore: m.byStore, colors: [...m.colors.values()] }))
+    .filter(m => m.stock > 0)
+    .sort((a, b) => b.stock - a.stock);
+  res.json({ updatedAt: msCatalog.updatedAt, stores: msStoreNames, count: rows.length, rows });
 });
 
 // Список складов МойСклад — чтобы связать их со складами на сайте
@@ -209,9 +210,14 @@ async function fetchStock(article) {
 }
 
 // ---- Полная синхронизация каталога МойСклад (каждые 20 минут) ----
-let msCatalog = { updatedAt: null, count: 0, rows: [] };
-let msIndex = new Map();  // код размера (upper) -> строка размера
-let msGroups = new Map(); // базовый артикул 402183L-BBLM (upper) -> суммарная строка
+let msCatalog = { updatedAt: null, count: 0 };
+let msStoreNames = [];    // порядок складов для колонок на сайте
+let msModels = new Map(); // МОДЕЛЬ(upper) -> { model, stock, byStore, colors:Map }
+let msGroups = new Map(); // базовый артикул 402183L-BBLM (upper) -> цветовая группа
+
+// Склады МойСклад, которые не показывать (по умолчанию «Резерв 2023»)
+const MS_SKIP_STORES = (process.env.MOYSKLAD_SKIP_STORES || 'Резерв 2023')
+  .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
 function msPrice(it) {
   return Array.isArray(it.salePrices) && it.salePrices[0]
@@ -224,6 +230,11 @@ function baseArticle(r) {
   return String(src).split(/\s*\(/)[0].trim();
 }
 
+// Модель из артикула: "402183L-BBLM" -> "402183L"
+function modelKey(base) {
+  return String(base).split('-')[0].trim() || base;
+}
+
 // Цвет из названия: "402183L-BBLM (32, BLUE BLACK LIME)" -> "BLUE BLACK LIME"
 function colorFromName(r) {
   const m = String(r.name || '').match(/\(([^)]*)\)/);
@@ -232,15 +243,23 @@ function colorFromName(r) {
   return (parts.length > 1 ? parts.slice(1).join(',') : m[1]).trim();
 }
 
-// Остаток по артикулу: сначала группа (сумма размеров), потом размер, потом живой запрос
+// Остаток по артикулу: цветовая группа, затем модель, затем живой запрос
 async function getStock(article) {
   const key = String(article).toUpperCase();
-  if (msGroups.has(key)) return msGroups.get(key);
-  if (msIndex.has(key)) return msIndex.get(key);
+  if (msGroups.has(key)) {
+    const g = msGroups.get(key);
+    return { article: g.article, name: g.color, stock: g.stock, quantity: g.stock,
+             reserve: 0, inTransit: 0, price: g.price, byStore: g.byStore };
+  }
+  if (msModels.has(key)) {
+    const m = msModels.get(key);
+    return { article: m.model, name: m.model, stock: m.stock, quantity: m.stock,
+             reserve: 0, inTransit: 0, price: null, byStore: m.byStore };
+  }
   return await fetchStock(article);
 }
 
-// Список складов МойСклад (Главный, Ашан, Валаматзода, Фаровон и т.д.)
+// Список складов МойСклад (без скрытых, напр. «Резерв 2023»)
 let msStores = [];
 async function msFetchStores() {
   const auth = msAuthHeader();
@@ -251,10 +270,9 @@ async function msFetchStores() {
     });
     if (!r.ok) { console.error(`⚠️ МойСклад stores ${r.status}`); return; }
     const data = await r.json();
-    msStores = (data.rows || []).map(s => ({
-      id: String(s.meta && s.meta.href || '').split('/').pop(),
-      name: s.name || ''
-    }));
+    msStores = (data.rows || [])
+      .map(s => ({ id: String(s.meta && s.meta.href || '').split('/').pop(), name: s.name || '' }))
+      .filter(s => s.name && !MS_SKIP_STORES.includes(s.name.toLowerCase()));
     console.log(`🏬 МойСклад склады: ${msStores.map(s => s.name).join(', ')}`);
   } catch (e) {
     console.error('ms stores', e.message);
@@ -265,61 +283,67 @@ async function msSyncAll() {
   const auth = msAuthHeader();
   if (!auth) return;
   await msFetchStores();
-  const limit = 1000;
-  let offset = 0;
-  const rows = [];
-  for (let page = 0; page < 200; page++) {
-    const url = `${MS_API}/entity/assortment?limit=${limit}&offset=${offset}`;
-    const r = await fetch(url, {
-      headers: { 'Authorization': auth, 'Accept': 'application/json;charset=utf-8' }
-    });
-    if (!r.ok) {
-      const body = await r.text().catch(() => '');
-      console.error(`⚠️ МойСклад sync ${r.status}: ${body.slice(0, 150)}`);
-      return; // не затираем уже загруженный каталог
-    }
-    const data = await r.json();
-    const batch = data.rows || [];
-    for (const it of batch) {
-      rows.push({
-        article: it.article || it.code || '',
-        name: it.name || '',
-        code: it.code || '',
-        stock: it.stock ?? 0,
-        reserve: it.reserve ?? 0,
-        inTransit: it.inTransit ?? 0,
-        quantity: it.quantity ?? 0,
-        price: msPrice(it)
-      });
-    }
-    offset += batch.length;
-    const size = data.meta && data.meta.size ? data.meta.size : offset;
-    if (batch.length < limit || offset >= size) break;
-  }
-  msCatalog = { updatedAt: new Date().toISOString(), count: rows.length, rows };
-  msIndex = new Map(rows.map(r => [String(r.article).toUpperCase(), r]));
+  const stores = msStores.length ? msStores : [{ id: null, name: 'Склад' }];
+  const headers = { 'Authorization': auth, 'Accept': 'application/json;charset=utf-8' };
 
-  // Группировка по базовому артикулу (все размеры одного 402183L-BBLM в одну строку)
-  const groups = new Map();
-  for (const r of rows) {
-    const base = baseArticle(r);
-    if (!base) continue;
-    const key = base.toUpperCase();
-    let g = groups.get(key);
-    if (!g) {
-      g = { article: base, name: colorFromName(r) || base, stock: 0, reserve: 0, inTransit: 0, quantity: 0, price: r.price };
-      groups.set(key, g);
+  const models = new Map(); // МОДЕЛЬ(upper) -> { model, stock, byStore, colors:Map }
+  const groups = new Map(); // БАЗА(upper) -> { article, model, color, stock, byStore, price }
+
+  for (const store of stores) {
+    const storeHref = store.id ? `${MS_API}/entity/store/${store.id}` : null;
+    let offset = 0;
+    for (let page = 0; page < 200; page++) {
+      let url = `${MS_API}/entity/assortment?limit=1000&offset=${offset}`;
+      if (storeHref) url += `&filter=stockStore=${storeHref}`;
+      const r = await fetch(url, { headers });
+      if (!r.ok) {
+        const body = await r.text().catch(() => '');
+        console.error(`⚠️ МойСклад «${store.name}» ${r.status}: ${body.slice(0, 120)}`);
+        break; // пропускаем этот склад, продолжаем остальные
+      }
+      const data = await r.json();
+      const batch = data.rows || [];
+      for (const it of batch) {
+        const st = Number(it.stock) || 0;
+        if (st <= 0) continue; // на этом складе товара нет — пропускаем
+        const base = baseArticle({ code: it.code, name: it.name, article: it.article });
+        if (!base) continue;
+        const baseU = base.toUpperCase();
+        const model = modelKey(base);
+        const color = colorFromName({ name: it.name }) || base;
+        const price = msPrice(it);
+
+        // цветовая группа (для /api/stock и кнопки «В склад»)
+        let g = groups.get(baseU);
+        if (!g) { g = { article: base, model, color, stock: 0, byStore: {}, price }; groups.set(baseU, g); }
+        g.stock += st;
+        g.byStore[store.name] = (g.byStore[store.name] || 0) + st;
+        if (g.price == null && price != null) g.price = price;
+
+        // модель -> цвета
+        const modelU = model.toUpperCase();
+        let m = models.get(modelU);
+        if (!m) { m = { model, stock: 0, byStore: {}, colors: new Map() }; models.set(modelU, m); }
+        m.stock += st;
+        m.byStore[store.name] = (m.byStore[store.name] || 0) + st;
+        let c = m.colors.get(baseU);
+        if (!c) { c = { article: base, color, stock: 0, byStore: {}, price }; m.colors.set(baseU, c); }
+        c.stock += st;
+        c.byStore[store.name] = (c.byStore[store.name] || 0) + st;
+        if (c.price == null && price != null) c.price = price;
+      }
+      offset += batch.length;
+      const size = data.meta && data.meta.size ? data.meta.size : offset;
+      if (batch.length < 1000 || offset >= size) break;
+      await new Promise(res => setTimeout(res, 120)); // бережём лимиты МойСклад
     }
-    g.stock     += Number(r.stock) || 0;
-    g.reserve   += Number(r.reserve) || 0;
-    g.inTransit += Number(r.inTransit) || 0;
-    g.quantity  += Number(r.quantity) || 0;
-    if (g.price == null && r.price != null) g.price = r.price;
-    if ((!g.name || g.name === base) && colorFromName(r)) g.name = colorFromName(r);
   }
+
+  msStoreNames = stores.map(s => s.name);
+  msModels = models;
   msGroups = groups;
-
-  console.log(`🔄 МойСклад: синхронизировано размеров — ${rows.length}, артикулов — ${groups.size}`);
+  msCatalog = { updatedAt: new Date().toISOString(), count: models.size };
+  console.log(`🔄 МойСклад: складов ${stores.length}, моделей ${models.size}, цветов ${groups.size}`);
 }
 
 // ======================================================================
