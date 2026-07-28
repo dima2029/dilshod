@@ -540,7 +540,7 @@
                 </div>
                 <div class="info-box" id="msInfo">Загрузка каталога…</div>
                 <div class="form-group" style="margin-bottom:0.75rem;">
-                    <input type="text" id="msSearch" placeholder="🔍 Поиск по артикулу или названию..." oninput="renderMoysklad()">
+                    <input type="text" id="msSearch" placeholder="🔍 Поиск по артикулу (любой, даже с нулём)..." oninput="onMsSearchInput()">
                 </div>
                 <div class="table-wrap" id="msTableWrap"></div>
             </div>
@@ -821,6 +821,34 @@ async function loadMoysklad() {
     renderMoysklad();
 }
 
+// Построить таблицу остатков (модель -> цвета -> размеры) с колонками складов
+function msBuildTable(models, stores) {
+    if (!models.length) return '<div class="empty-state"><div class="empty-icon">📦</div><div>Нет товаров</div></div>';
+    const storeTh = stores.map(s => `<th>${escHtml(s)}</th>`).join('');
+    let html = `<table><thead><tr><th>Артикул / Цвет</th>${storeTh}<th>Всего</th><th>Цена</th><th>В склад</th></tr></thead><tbody>`;
+    let ci = 0;
+    for (const m of models.slice(0, 300)) {
+        const mStores = stores.map(s => `<td class="stk-cell">${m.byStore[s] || 0}</td>`).join('');
+        html += `<tr class="ms-model"><td><strong>📦 ${escHtml(m.model)}</strong></td>${mStores}<td class="stk-cell"><strong>${m.stock}</strong></td><td></td><td></td></tr>`;
+        for (const c of (m.colors || [])) {
+            ci++;
+            const cStores = stores.map(s => `<td class="stk-cell">${c.byStore[s] || 0}</td>`).join('');
+            const inStock = items.some(i => i.article === String(c.article).toUpperCase());
+            const btn = inStock
+                ? `<span class="ms-added">✅</span>`
+                : `<button class="action-btn add-ms" onclick="event.stopPropagation(); addFromMs('${jsStr(c.article)}')">➕ В склад</button>`;
+            html += `<tr class="ms-color" onclick="toggleSizes(${ci})" style="cursor:pointer"><td class="ms-color-name"><span class="ms-caret" id="ct-${ci}">▸</span> ${escHtml(c.color)} <span style="color:#aaa">${escHtml(c.article)}</span></td>${cStores}<td class="stk-cell"><span class="stk-n">${c.stock}</span></td><td>${c.price != null ? c.price : '—'}</td><td>${btn}</td></tr>`;
+            for (const s of (c.sizes || [])) {
+                const sStores = stores.map(st => `<td class="stk-cell">${s.byStore[st] || 0}</td>`).join('');
+                html += `<tr class="ms-size sz${ci}" style="display:none"><td class="ms-size-name">размер ${escHtml(s.size)} <span style="color:#bbb">${escHtml(s.article || '')}</span></td>${sStores}<td class="stk-cell">${s.stock}</td><td></td><td></td></tr>`;
+            }
+        }
+    }
+    html += '</tbody></table>';
+    if (models.length > 300) html += `<div style="text-align:center;color:#888;padding:.5rem">…показаны первые 300. Уточните поиск.</div>`;
+    return html;
+}
+
 function renderMoysklad() {
     const info = document.getElementById('msInfo');
     const wrap = document.getElementById('msTableWrap');
@@ -840,47 +868,35 @@ function renderMoysklad() {
                 ? new Date(msData.updatedAt).toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})
                 : '—';
             const pieces = models.reduce((s, m) => s + (Number(m.stock) || 0), 0);
-            info.innerHTML = `Моделей: <strong>${models.length}</strong> · всего <strong>${pieces}</strong> шт · обновлено в ${upd} · автообновление каждые 20 мин`;
+            info.innerHTML = `Моделей: <strong>${models.length}</strong> · всего <strong>${pieces}</strong> шт · обновлено в ${upd} · поиск ищет по всему каталогу`;
         }
     }
 
-    const q = (document.getElementById('msSearch')?.value || '').trim().toUpperCase();
-    let list = models;
-    if (q) list = models.filter(m =>
-        (m.model || '').toUpperCase().includes(q) ||
-        (m.colors || []).some(c =>
-            (c.article || '').toUpperCase().includes(q) ||
-            (c.color || '').toUpperCase().includes(q) ||
-            (c.sizes || []).some(s => (s.article || '').toUpperCase().includes(q))));
+    // Если в поиске что-то введено — ищем по всему каталогу через сервер
+    const q = (document.getElementById('msSearch')?.value || '').trim();
+    if (q) { doMsSearch(q); return; }
+    wrap.innerHTML = msBuildTable(models, stores);
+}
 
-    if (!list.length) {
-        wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">📦</div><div>Нет товаров</div></div>';
-        return;
-    }
+let msSearchTimer = null;
+function onMsSearchInput() {
+    clearTimeout(msSearchTimer);
+    const q = (document.getElementById('msSearch').value || '').trim();
+    if (!q) { renderMoysklad(); return; }
+    msSearchTimer = setTimeout(() => doMsSearch(q), 350);
+}
 
-    const storeTh = stores.map(s => `<th>${escHtml(s)}</th>`).join('');
-    let html = `<table><thead><tr><th>Артикул / Цвет</th>${storeTh}<th>Всего</th><th>Цена</th><th>В склад</th></tr></thead><tbody>`;
-    let ci = 0;
-    for (const m of list.slice(0, 300)) {
-        const mStores = stores.map(s => `<td class="stk-cell">${m.byStore[s] || 0}</td>`).join('');
-        html += `<tr class="ms-model"><td><strong>📦 ${escHtml(m.model)}</strong></td>${mStores}<td class="stk-cell"><strong>${m.stock}</strong></td><td></td><td></td></tr>`;
-        for (const c of (m.colors || [])) {
-            ci++;
-            const cStores = stores.map(s => `<td class="stk-cell">${c.byStore[s] || 0}</td>`).join('');
-            const inStock = items.some(i => i.article === String(c.article).toUpperCase());
-            const btn = inStock
-                ? `<span class="ms-added">✅</span>`
-                : `<button class="action-btn add-ms" onclick="event.stopPropagation(); addFromMs('${jsStr(c.article)}')">➕ В склад</button>`;
-            html += `<tr class="ms-color" onclick="toggleSizes(${ci})" style="cursor:pointer"><td class="ms-color-name"><span class="ms-caret" id="ct-${ci}">▸</span> ${escHtml(c.color)} <span style="color:#aaa">${escHtml(c.article)}</span></td>${cStores}<td class="stk-cell"><span class="stk-n">${c.stock}</span></td><td>${c.price != null ? c.price : '—'}</td><td>${btn}</td></tr>`;
-            for (const s of (c.sizes || [])) {
-                const sStores = stores.map(st => `<td class="stk-cell">${s.byStore[st] || 0}</td>`).join('');
-                html += `<tr class="ms-size sz${ci}" style="display:none"><td class="ms-size-name">размер ${escHtml(s.size)} <span style="color:#bbb">${escHtml(s.article || '')}</span></td>${sStores}<td class="stk-cell">${s.stock}</td><td></td><td></td></tr>`;
-            }
-        }
+async function doMsSearch(q) {
+    const wrap = document.getElementById('msTableWrap');
+    if (!wrap) return;
+    wrap.innerHTML = '<div style="padding:1.5rem;text-align:center;color:#888">🔎 Поиск…</div>';
+    try {
+        const r = await fetch('/api/moysklad/find?q=' + encodeURIComponent(q));
+        const data = await r.json();
+        wrap.innerHTML = msBuildTable(data.rows || [], data.stores || []);
+    } catch {
+        wrap.innerHTML = '<div style="padding:1.5rem;text-align:center;color:#c00">Ошибка поиска</div>';
     }
-    html += '</tbody></table>';
-    if (list.length > 300) html += `<div style="text-align:center;color:#888;padding:.5rem">…показаны первые 300 моделей. Уточните поиск.</div>`;
-    wrap.innerHTML = html;
 }
 
 // Раскрыть/свернуть размеры под цветом

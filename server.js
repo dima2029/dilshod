@@ -167,6 +167,50 @@ app.get('/api/moysklad/stores', (req, res) => {
   res.json({ stores: msStores });
 });
 
+// Группировка списка товаров в модель -> цвета -> размеры (с остатком по складам)
+function groupInfos(infos) {
+  const models = new Map();
+  for (const inf of infos) {
+    const mU = inf.model.toUpperCase();
+    let m = models.get(mU);
+    if (!m) { m = { model: inf.model, stock: 0, byStore: {}, colors: new Map() }; models.set(mU, m); }
+    let c = m.colors.get(inf.baseU);
+    if (!c) { c = { article: inf.base, color: inf.color, stock: 0, byStore: {}, price: inf.price, sizes: new Map() }; m.colors.set(inf.baseU, c); }
+    const sz = inf.size || '—';
+    let s = c.sizes.get(sz);
+    if (!s) { s = { size: sz, article: inf.variantArticle || '', stock: 0, byStore: {} }; c.sizes.set(sz, s); }
+    for (const [store, q] of Object.entries(inf.byStore)) {
+      m.stock += q; m.byStore[store] = (m.byStore[store] || 0) + q;
+      c.stock += q; c.byStore[store] = (c.byStore[store] || 0) + q;
+      s.stock += q; s.byStore[store] = (s.byStore[store] || 0) + q;
+    }
+  }
+  return [...models.values()].map(m => ({
+    model: m.model, stock: m.stock, byStore: m.byStore,
+    colors: [...m.colors.values()].map(c => ({
+      article: c.article, color: c.color, stock: c.stock, byStore: c.byStore, price: c.price,
+      sizes: [...c.sizes.values()].sort((a, b) => (parseFloat(a.size) || 999) - (parseFloat(b.size) || 999))
+    }))
+  }));
+}
+
+// Поиск по ВСЕМУ каталогу (в т.ч. нулевые остатки) — по артикулу/коду/модели/цвету
+app.get('/api/moysklad/find', (req, res) => {
+  const q = String(req.query.q || '').trim().toUpperCase();
+  if (!q) return res.json({ stores: msStoreNames, rows: [] });
+  const matched = [];
+  for (const inf of msInfoAll.values()) {
+    if ((inf.variantArticle || '').toUpperCase().includes(q) ||
+        inf.baseU.includes(q) ||
+        (inf.model || '').toUpperCase().includes(q) ||
+        (inf.color || '').toUpperCase().includes(q)) {
+      matched.push(inf);
+      if (matched.length >= 800) break;
+    }
+  }
+  res.json({ stores: msStoreNames.length ? msStoreNames : ['Всего'], rows: groupInfos(matched) });
+});
+
 // Диагностика синхронизации (что пошло не так)
 app.get('/api/moysklad/debug', (req, res) => {
   res.json({
@@ -238,6 +282,7 @@ let msCatalog = { updatedAt: null, count: 0 };
 let msStoreNames = [];    // порядок складов для колонок на сайте
 let msModels = new Map(); // МОДЕЛЬ(upper) -> { model, stock, byStore, colors:Map }
 let msGroups = new Map(); // базовый артикул 402183L-BBLM (upper) -> цветовая группа
+let msInfoAll = new Map();// assortmentId -> инфо ВСЕХ товаров (в т.ч. с нулём) для поиска
 
 // Склады МойСклад, которые не показывать (по умолчанию «Резерв 2023»)
 const MS_SKIP_STORES = (process.env.MOYSKLAD_SKIP_STORES || 'Резерв 2023')
@@ -368,7 +413,7 @@ async function msSyncAll() {
           color: colorFromName({ name: it.name }) || base,
           size: sizeFromName({ name: it.name }),
           variantArticle: it.article || '', // код размера (напр. 216301)
-          price: msPrice(it), totalStock: Number(it.stock) || 0
+          price: msPrice(it), totalStock: Number(it.stock) || 0, byStore: {}
         });
       }
       offset += batch.length;
@@ -391,15 +436,19 @@ async function msSyncAll() {
       const inf = info.get(e.assortmentId);
       if (!inf) continue;
       if (!storeById.has(e.storeId)) continue; // скрытый склад (напр. Резерв 2023)
-      addStock(inf, storeById.get(e.storeId), Number(e.stock) || 0);
+      const storeName = storeById.get(e.storeId);
+      const st = Number(e.stock) || 0;
+      inf.byStore[storeName] = (inf.byStore[storeName] || 0) + st; // полный индекс
+      addStock(inf, storeName, st);
     }
     msStoreNames = msStores.map(s => s.name);
   } else {
     // Резерв: если отчёт по складам недоступен — показываем общий остаток
-    for (const inf of info.values()) addStock(inf, 'Всего', inf.totalStock);
+    for (const inf of info.values()) { inf.byStore['Всего'] = inf.totalStock; addStock(inf, 'Всего', inf.totalStock); }
     msStoreNames = ['Всего'];
   }
 
+  msInfoAll = info; // полный каталог для поиска по любому артикулу
   msModels = models;
   msGroups = groups;
   msCatalog = { updatedAt: new Date().toISOString(), count: models.size };
@@ -510,22 +559,22 @@ function mainMenu() {
   ]};
 }
 
-// Поиск по каталогу МойСклад (модель/цвет/артикул)
+// Поиск по ВСЕМУ каталогу МойСклад (артикул/код размера/модель/цвет)
 function searchMsColors(query) {
   const q = query.trim().toUpperCase();
   if (!q) return [];
-  const res = [];
-  for (const m of msModels.values()) {
-    for (const c of m.colors.values()) {
-      if ((c.article || '').toUpperCase().includes(q) ||
-          (c.color || '').toUpperCase().includes(q) ||
-          (m.model || '').toUpperCase().includes(q) ||
-          [...c.sizes.values()].some(s => (s.article || '').toUpperCase().includes(q))) {
-        res.push({ model: m.model, c });
-        if (res.length >= 60) return res;
-      }
+  const matched = [];
+  for (const inf of msInfoAll.values()) {
+    if ((inf.variantArticle || '').toUpperCase().includes(q) ||
+        inf.baseU.includes(q) ||
+        (inf.model || '').toUpperCase().includes(q) ||
+        (inf.color || '').toUpperCase().includes(q)) {
+      matched.push(inf);
+      if (matched.length >= 800) break;
     }
   }
+  const res = [];
+  for (const m of groupInfos(matched)) for (const c of m.colors) res.push({ model: m.model, c });
   return res;
 }
 
@@ -536,13 +585,13 @@ function formatMsResult(query, store) {
   const blocks = [];
   for (const { c } of found) {
     const total = all ? c.stock : (c.byStore[store] || 0);
-    if (total <= 0) continue;
-    const sizes = [...c.sizes.values()]
+    const sizes = (c.sizes || [])
       .map(s => ({ size: s.size, n: all ? s.stock : (s.byStore[store] || 0) }))
       .filter(s => s.n > 0)
       .sort((a, b) => (parseFloat(a.size) || 999) - (parseFloat(b.size) || 999));
     const sizeStr = sizes.map(s => `${esc(s.size)}=${s.n}`).join('  ') || '—';
-    blocks.push(`📦 <b>${esc(c.article)}</b> — ${esc(c.color)}\nОстаток: <b>${total}</b> шт\nразмеры: ${sizeStr}`);
+    const line = total > 0 ? `Остаток: <b>${total}</b> шт\nразмеры: ${sizeStr}` : 'Остаток: <b>0</b> (нет в твоём магазине)';
+    blocks.push(`📦 <b>${esc(c.article)}</b> — ${esc(c.color)}\n${line}`);
     if (blocks.length >= 15) break;
   }
   if (!blocks.length) {
