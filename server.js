@@ -143,7 +143,13 @@ app.get('/api/stock/:article', async (req, res) => {
 // только товары с остатком > 0. Обновляется синхронизацией каждые 20 минут.
 app.get('/api/moysklad', (req, res) => {
   const rows = [...msModels.values()]
-    .map(m => ({ model: m.model, stock: m.stock, byStore: m.byStore, colors: [...m.colors.values()] }))
+    .map(m => ({
+      model: m.model, stock: m.stock, byStore: m.byStore,
+      colors: [...m.colors.values()].map(c => ({
+        article: c.article, color: c.color, stock: c.stock, byStore: c.byStore, price: c.price,
+        sizes: [...c.sizes.values()].sort((a, b) => (parseFloat(a.size) || 999) - (parseFloat(b.size) || 999))
+      }))
+    }))
     .filter(m => m.stock > 0)
     .sort((a, b) => b.stock - a.stock);
   res.json({ updatedAt: msCatalog.updatedAt, stores: msStoreNames, count: rows.length, rows });
@@ -254,6 +260,12 @@ function colorFromName(r) {
   return (parts.length > 1 ? parts.slice(1).join(',') : m[1]).trim();
 }
 
+// Размер из названия: "402183L-BBLM (32, BLUE BLACK LIME)" -> "32"
+function sizeFromName(r) {
+  const m = String(r.name || '').match(/\(([^)]*)\)/);
+  return m ? m[1].split(',')[0].trim() : '';
+}
+
 // Остаток по артикулу: цветовая группа, затем модель, затем живой запрос
 async function getStock(article) {
   const key = String(article).toUpperCase();
@@ -316,9 +328,15 @@ async function msSyncAll() {
     if (!m) { m = { model: inf.model, stock: 0, byStore: {}, colors: new Map() }; models.set(mU, m); }
     m.stock += st; m.byStore[storeName] = (m.byStore[storeName] || 0) + st;
     let c = m.colors.get(inf.baseU);
-    if (!c) { c = { article: inf.base, color: inf.color, stock: 0, byStore: {}, price: inf.price }; m.colors.set(inf.baseU, c); }
+    if (!c) { c = { article: inf.base, color: inf.color, stock: 0, byStore: {}, price: inf.price, sizes: new Map() }; m.colors.set(inf.baseU, c); }
     c.stock += st; c.byStore[storeName] = (c.byStore[storeName] || 0) + st;
     if (c.price == null && inf.price != null) c.price = inf.price;
+
+    // размер -> остаток по складам
+    const sz = inf.size || '—';
+    let s = c.sizes.get(sz);
+    if (!s) { s = { size: sz, stock: 0, byStore: {} }; c.sizes.set(sz, s); }
+    s.stock += st; s.byStore[storeName] = (s.byStore[storeName] || 0) + st;
   }
 
   // 1) Один проход по каталогу: id -> инфо (артикул/модель/цвет/цена/общий остаток)
@@ -341,6 +359,7 @@ async function msSyncAll() {
         info.set(id, {
           base, baseU: base.toUpperCase(), model: modelKey(base),
           color: colorFromName({ name: it.name }) || base,
+          size: sizeFromName({ name: it.name }),
           price: msPrice(it), totalStock: Number(it.stock) || 0
         });
       }

@@ -354,6 +354,9 @@
         .ms-added { color: var(--success); font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
         .ms-model td { background: var(--primary-light); font-size: 0.85rem; }
         .ms-color-name { color: #555; padding-left: 1.25rem; }
+        .ms-caret { color: var(--primary); font-size: 0.7rem; display: inline-block; width: 0.9rem; }
+        .ms-size td { background: #fafbff; font-size: 0.8rem; color: #777; }
+        .ms-size-name { padding-left: 2.75rem; }
     </style>
 </head>
 <body>
@@ -854,21 +857,40 @@ function renderMoysklad() {
 
     const storeTh = stores.map(s => `<th>${escHtml(s)}</th>`).join('');
     let html = `<table><thead><tr><th>Артикул / Цвет</th>${storeTh}<th>Всего</th><th>Цена</th><th>В склад</th></tr></thead><tbody>`;
+    let ci = 0;
     for (const m of list.slice(0, 300)) {
         const mStores = stores.map(s => `<td class="stk-cell">${m.byStore[s] || 0}</td>`).join('');
         html += `<tr class="ms-model"><td><strong>📦 ${escHtml(m.model)}</strong></td>${mStores}<td class="stk-cell"><strong>${m.stock}</strong></td><td></td><td></td></tr>`;
         for (const c of (m.colors || [])) {
+            ci++;
             const cStores = stores.map(s => `<td class="stk-cell">${c.byStore[s] || 0}</td>`).join('');
             const inStock = items.some(i => i.article === String(c.article).toUpperCase());
             const btn = inStock
                 ? `<span class="ms-added">✅</span>`
-                : `<button class="action-btn add-ms" onclick="addFromMs('${jsStr(c.article)}')">➕ В склад</button>`;
-            html += `<tr class="ms-color"><td class="ms-color-name">${escHtml(c.color)} <span style="color:#aaa">${escHtml(c.article)}</span></td>${cStores}<td class="stk-cell"><span class="stk-n">${c.stock}</span></td><td>${c.price != null ? c.price : '—'}</td><td>${btn}</td></tr>`;
+                : `<button class="action-btn add-ms" onclick="event.stopPropagation(); addFromMs('${jsStr(c.article)}')">➕ В склад</button>`;
+            html += `<tr class="ms-color" onclick="toggleSizes(${ci})" style="cursor:pointer"><td class="ms-color-name"><span class="ms-caret" id="ct-${ci}">▸</span> ${escHtml(c.color)} <span style="color:#aaa">${escHtml(c.article)}</span></td>${cStores}<td class="stk-cell"><span class="stk-n">${c.stock}</span></td><td>${c.price != null ? c.price : '—'}</td><td>${btn}</td></tr>`;
+            for (const s of (c.sizes || [])) {
+                const sStores = stores.map(st => `<td class="stk-cell">${s.byStore[st] || 0}</td>`).join('');
+                html += `<tr class="ms-size sz${ci}" style="display:none"><td class="ms-size-name">размер ${escHtml(s.size)}</td>${sStores}<td class="stk-cell">${s.stock}</td><td></td><td></td></tr>`;
+            }
         }
     }
     html += '</tbody></table>';
     if (list.length > 300) html += `<div style="text-align:center;color:#888;padding:.5rem">…показаны первые 300 моделей. Уточните поиск.</div>`;
     wrap.innerHTML = html;
+}
+
+// Раскрыть/свернуть размеры под цветом
+function toggleSizes(ci) {
+    const rows = document.querySelectorAll('.sz' + ci);
+    const caret = document.getElementById('ct-' + ci);
+    let opened = false;
+    rows.forEach(r => {
+        const hidden = r.style.display === 'none';
+        r.style.display = hidden ? '' : 'none';
+        opened = hidden;
+    });
+    if (caret) caret.textContent = opened ? '▾' : '▸';
 }
 
 // Строку-помощник для безопасной подстановки артикула в onclick
