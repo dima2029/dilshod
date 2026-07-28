@@ -342,7 +342,7 @@ async function msSyncAll() {
     // размер -> остаток по складам
     const sz = inf.size || '—';
     let s = c.sizes.get(sz);
-    if (!s) { s = { size: sz, stock: 0, byStore: {} }; c.sizes.set(sz, s); }
+    if (!s) { s = { size: sz, article: inf.variantArticle || '', stock: 0, byStore: {} }; c.sizes.set(sz, s); }
     s.stock += st; s.byStore[storeName] = (s.byStore[storeName] || 0) + st;
   }
 
@@ -367,6 +367,7 @@ async function msSyncAll() {
           base, baseU: base.toUpperCase(), model: modelKey(base),
           color: colorFromName({ name: it.name }) || base,
           size: sizeFromName({ name: it.name }),
+          variantArticle: it.article || '', // код размера (напр. 216301)
           price: msPrice(it), totalStock: Number(it.stock) || 0
         });
       }
@@ -518,7 +519,8 @@ function searchMsColors(query) {
     for (const c of m.colors.values()) {
       if ((c.article || '').toUpperCase().includes(q) ||
           (c.color || '').toUpperCase().includes(q) ||
-          (m.model || '').toUpperCase().includes(q)) {
+          (m.model || '').toUpperCase().includes(q) ||
+          [...c.sizes.values()].some(s => (s.article || '').toUpperCase().includes(q))) {
         res.push({ model: m.model, c });
         if (res.length >= 60) return res;
       }

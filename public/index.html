@@ -848,7 +848,10 @@ function renderMoysklad() {
     let list = models;
     if (q) list = models.filter(m =>
         (m.model || '').toUpperCase().includes(q) ||
-        (m.colors || []).some(c => (c.article || '').toUpperCase().includes(q) || (c.color || '').toUpperCase().includes(q)));
+        (m.colors || []).some(c =>
+            (c.article || '').toUpperCase().includes(q) ||
+            (c.color || '').toUpperCase().includes(q) ||
+            (c.sizes || []).some(s => (s.article || '').toUpperCase().includes(q))));
 
     if (!list.length) {
         wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">📦</div><div>Нет товаров</div></div>';
@@ -871,7 +874,7 @@ function renderMoysklad() {
             html += `<tr class="ms-color" onclick="toggleSizes(${ci})" style="cursor:pointer"><td class="ms-color-name"><span class="ms-caret" id="ct-${ci}">▸</span> ${escHtml(c.color)} <span style="color:#aaa">${escHtml(c.article)}</span></td>${cStores}<td class="stk-cell"><span class="stk-n">${c.stock}</span></td><td>${c.price != null ? c.price : '—'}</td><td>${btn}</td></tr>`;
             for (const s of (c.sizes || [])) {
                 const sStores = stores.map(st => `<td class="stk-cell">${s.byStore[st] || 0}</td>`).join('');
-                html += `<tr class="ms-size sz${ci}" style="display:none"><td class="ms-size-name">размер ${escHtml(s.size)}</td>${sStores}<td class="stk-cell">${s.stock}</td><td></td><td></td></tr>`;
+                html += `<tr class="ms-size sz${ci}" style="display:none"><td class="ms-size-name">размер ${escHtml(s.size)} <span style="color:#bbb">${escHtml(s.article || '')}</span></td>${sStores}<td class="stk-cell">${s.stock}</td><td></td><td></td></tr>`;
             }
         }
     }
