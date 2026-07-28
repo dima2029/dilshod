@@ -290,6 +290,7 @@ async function msSyncAll() {
   const groups = new Map(); // БАЗА(upper) -> { article, model, color, stock, byStore, price }
 
   for (const store of stores) {
+   try {
     const storeHref = store.id ? `${MS_API}/entity/store/${store.id}` : null;
     let offset = 0;
     for (let page = 0; page < 200; page++) {
@@ -337,8 +338,12 @@ async function msSyncAll() {
       if (batch.length < 1000 || offset >= size) break;
       await new Promise(res => setTimeout(res, 120)); // бережём лимиты МойСклад
     }
+   } catch (e) {
+     console.error(`⚠️ МойСклад «${store.name}»: ${e.message}`);
+   }
   }
 
+  // Итог применяем всегда — даже при частичной ошибке (без вечного «синхронизируется»)
   msStoreNames = stores.map(s => s.name);
   msModels = models;
   msGroups = groups;
