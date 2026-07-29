@@ -375,7 +375,6 @@ async function msSyncAll() {
   await msFetchStores();
   msDebug.storesFetched = msStores.map(s => s.name);
   const headers = { 'Authorization': auth, 'Accept': 'application/json;charset=utf-8' };
-  const storeById = new Map(msStores.map(s => [s.id, s.name])); // только видимые склады
 
   const models = new Map();
   const groups = new Map();
@@ -403,76 +402,65 @@ async function msSyncAll() {
     s.stock += st; s.byStore[storeName] = (s.byStore[storeName] || 0) + st;
   }
 
-  // 1) Один проход по каталогу: id -> инфо (артикул/модель/цвет/цена/общий остаток)
+  // Остатки берём прямо из ассортимента, отдельно по каждому складу
+  // (assortment?filter=stockStore=... содержит ВСЕ позиции, включая те, что
+  //  теряются в отчёте /report/stock/bystore — например 216301).
   const info = new Map();
-  try {
-    let offset = 0;
-    for (let page = 0; page < 200; page++) {
-      const r = await fetch(`${MS_API}/entity/assortment?limit=1000&offset=${offset}`, { headers });
-      if (!r.ok) {
-        const body = await r.text().catch(() => '');
-        msDebug.errors.push(`assortment HTTP ${r.status} ${body.slice(0, 100)}`);
-        break;
-      }
-      const data = await r.json();
-      const batch = data.rows || [];
-      for (const it of batch) {
-        const id = String(it.meta && it.meta.href || '').split('?')[0].split('/').pop();
-        const base = baseArticle({ code: it.code, name: it.name, article: it.article });
-        if (!id || !base) continue;
-        info.set(id, {
-          base, baseU: base.toUpperCase(), model: modelKey(base),
-          color: colorFromName({ name: it.name }) || base,
-          size: sizeFromName({ name: it.name }),
-          variantArticle: it.article || '', // код размера (напр. 216301)
-          price: msPrice(it), totalStock: Number(it.stock) || 0, byStore: {}
-        });
-      }
-      offset += batch.length;
-      const size = data.meta && data.meta.size ? data.meta.size : offset;
-      if (batch.length < 1000 || offset >= size) break;
-    }
-  } catch (e) { msDebug.errors.push('assortment ' + e.message); }
+  const stores = msStores.length ? msStores : [{ id: null, name: 'Всего' }];
 
-  // 2) Остатки по складам — полный отчёт /report/stock/bystore (нормальная постраничная загрузка)
-  const bystoreRows = [];
-  try {
-    let offset = 0;
-    for (let p = 0; p < 2000; p++) {
-      const r = await fetch(`${MS_API}/report/stock/bystore?limit=1000&offset=${offset}`, { headers });
-      if (!r.ok) { const b = await r.text().catch(() => ''); msDebug.errors.push(`bystore HTTP ${r.status} ${b.slice(0, 100)}`); break; }
-      const data = await r.json();
-      const rows = data.rows || [];
-      bystoreRows.push(...rows);
-      offset += rows.length;
-      const size = data.meta && data.meta.size ? data.meta.size : offset;
-      if (rows.length < 1000 || offset >= size) break;
+  function upsertInfo(it) {
+    const id = String(it.meta && it.meta.href || '').split('?')[0].split('/').pop();
+    const base = baseArticle({ code: it.code, name: it.name, article: it.article });
+    if (!id || !base) return null;
+    let inf = info.get(id);
+    if (!inf) {
+      inf = {
+        base, baseU: base.toUpperCase(), model: modelKey(base),
+        color: colorFromName({ name: it.name }) || base,
+        size: sizeFromName({ name: it.name }),
+        variantArticle: it.article || '',
+        price: msPrice(it), byStore: {}
+      };
+      info.set(id, inf);
     }
-    msDebug.bystoreCount = bystoreRows.length;
-    if (bystoreRows[0]) msDebug.perStore.push({ sample: bystoreRows[0] });
-  } catch (e) { msDebug.errors.push('bystore ' + e.message); }
-
-  if (bystoreRows.length) {
-    for (const row of bystoreRows) {
-      const id = String(row.meta && row.meta.href || '').split('?')[0].split('/').pop();
-      const inf = info.get(id);
-      if (!inf) continue;
-      for (const sb of (row.stockByStore || [])) {
-        const sName = sb.name || '';
-        if (!sName || MS_SKIP_STORES.includes(sName.toLowerCase())) continue; // скрытый склад
-        const st = Number(sb.stock) || 0;
-        if (st <= 0) continue;
-        inf.byStore[sName] = (inf.byStore[sName] || 0) + st; // полный индекс
-        addStock(inf, sName, st);
-      }
-    }
-    msStoreNames = msStores.map(s => s.name);
-  } else {
-    // Резерв: если отчёт по складам недоступен — показываем общий остаток
-    for (const inf of info.values()) { inf.byStore['Всего'] = inf.totalStock; addStock(inf, 'Всего', inf.totalStock); }
-    msStoreNames = ['Всего'];
+    return inf;
   }
 
+  for (const store of stores) {
+    let seen = 0;
+    try {
+      const storeHref = store.id ? `${MS_API}/entity/store/${store.id}` : null;
+      let offset = 0;
+      for (let page = 0; page < 300; page++) {
+        let url = `${MS_API}/entity/assortment?limit=1000&offset=${offset}`;
+        if (storeHref) url += `&filter=stockStore=${storeHref}`;
+        const r = await fetch(url, { headers });
+        if (!r.ok) {
+          const body = await r.text().catch(() => '');
+          msDebug.errors.push(`assortment «${store.name}» HTTP ${r.status} ${body.slice(0, 100)}`);
+          break;
+        }
+        const data = await r.json();
+        const batch = data.rows || [];
+        for (const it of batch) {
+          const inf = upsertInfo(it);
+          if (!inf) continue;
+          const st = Number(it.stock) || 0;
+          if (st > 0) {
+            inf.byStore[store.name] = (inf.byStore[store.name] || 0) + st;
+            addStock(inf, store.name, st);
+            seen += st;
+          }
+        }
+        offset += batch.length;
+        const size = data.meta && data.meta.size ? data.meta.size : offset;
+        if (batch.length < 1000 || offset >= size) break;
+      }
+      msDebug.perStore.push({ store: store.name, stock: seen });
+    } catch (e) { msDebug.errors.push(`assortment «${store.name}» ${e.message}`); }
+  }
+
+  msStoreNames = stores.map(s => s.name);
   msInfoAll = info; // полный каталог для поиска по любому артикулу
   msModels = models;
   msGroups = groups;
