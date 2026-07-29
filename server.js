@@ -167,6 +167,29 @@ app.get('/api/moysklad/stores', (req, res) => {
   res.json({ stores: msStores });
 });
 
+// Сырой ответ МойСклад по артикулу — чтобы увидеть реальную структуру и остаток
+app.get('/api/moysklad/raw', async (req, res) => {
+  const art = String(req.query.article || '').trim();
+  const auth = msAuthHeader();
+  if (!auth) return res.json({ error: 'МойСклад не настроен' });
+  if (!art) return res.json({ error: 'нет ?article=' });
+  const headers = { 'Authorization': auth, 'Accept': 'application/json;charset=utf-8' };
+  const out = {};
+  try {
+    const r = await fetch(`${MS_API}/entity/assortment?filter=article=${encodeURIComponent(art)}&limit=100`, { headers });
+    const data = await r.json();
+    out.assortment = {
+      status: r.status, size: data.meta && data.meta.size,
+      rows: (data.rows || []).map(it => ({
+        type: it.meta && it.meta.type, name: it.name, code: it.code, article: it.article,
+        stock: it.stock, reserve: it.reserve, inTransit: it.inTransit, quantity: it.quantity,
+        variantsCount: it.variantsCount, id: String(it.meta && it.meta.href || '').split('?')[0].split('/').pop()
+      }))
+    };
+  } catch (e) { out.assortmentError = e.message; }
+  res.json(out);
+});
+
 // Группировка списка товаров в модель -> цвета -> размеры (с остатком по складам)
 function groupInfos(infos) {
   const models = new Map();
