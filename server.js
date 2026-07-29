@@ -159,7 +159,7 @@ app.get('/api/moysklad', (req, res) => {
     }))
     .filter(m => m.stock > 0)
     .sort((a, b) => b.stock - a.stock);
-  res.json({ updatedAt: msCatalog.updatedAt, stores: msStoreNames, count: rows.length, rows });
+  res.json({ updatedAt: msCatalog.updatedAt, sync: msSyncState, stores: msStoreNames, count: rows.length, rows });
 });
 
 // Список складов МойСклад — чтобы связать их со складами на сайте
@@ -253,7 +253,9 @@ app.get('/api/moysklad/debug', (req, res) => {
   res.json({
     configured: msConfigured(),
     updatedAt: msCatalog.updatedAt,
+    sync: msSyncState,
     models: msModels.size,
+    infoAll: msInfoAll ? msInfoAll.size : 0,
     storeNames: msStoreNames,
     debug: msDebug
   });
@@ -274,6 +276,20 @@ function msConfigured() {
   return Boolean(msAuthHeader());
 }
 
+// fetch с таймаутом — иначе зависший запрос к МойСклад навсегда останавливает синхронизацию
+async function msFetch(url, opts = {}, timeoutMs = 30000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// Состояние синхронизации каталога (видно на сайте, чтобы не гадать)
+let msSyncState = { status: 'idle', startedAt: null, finishedAt: null, lastError: null };
+
 // Возвращает { name, article, stock, reserve, inTransit, quantity, price } или null
 async function fetchStock(article) {
   const auth = msAuthHeader();
@@ -282,7 +298,7 @@ async function fetchStock(article) {
   const field = MS_MATCH_FIELD === 'code' ? 'code' : 'article';
   const url = `${MS_API}/entity/assortment?filter=${field}=${encodeURIComponent(article)}&limit=1`;
 
-  const r = await fetch(url, {
+  const r = await msFetch(url, {
     headers: {
       'Authorization': auth,
       'Accept': 'application/json;charset=utf-8',
@@ -389,7 +405,7 @@ async function msFetchStores() {
   const auth = msAuthHeader();
   if (!auth) return;
   try {
-    const r = await fetch(`${MS_API}/entity/store?limit=100`, {
+    const r = await msFetch(`${MS_API}/entity/store?limit=100`, {
       headers: { 'Authorization': auth, 'Accept': 'application/json;charset=utf-8' }
     });
     if (!r.ok) { console.error(`⚠️ МойСклад stores ${r.status}`); return; }
@@ -407,7 +423,21 @@ let msDebug = { lastRun: null, storesFetched: [], perStore: [], errors: [] };
 
 async function msSyncAll() {
   const auth = msAuthHeader();
-  if (!auth) return;
+  if (!auth) { msSyncState = { status: 'error', startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), lastError: 'МойСклад не настроен: нет MOYSKLAD_TOKEN или MOYSKLAD_LOGIN/MOYSKLAD_PASSWORD в Railway' }; return; }
+  msSyncState = { status: 'running', startedAt: new Date().toISOString(), finishedAt: null, lastError: null };
+  try {
+    await msSyncAllInner(auth);
+    msSyncState.status = 'done';
+  } catch (e) {
+    msSyncState.status = 'error';
+    msSyncState.lastError = e.message;
+    console.error('❌ МойСклад синхронизация:', e.message);
+  } finally {
+    msSyncState.finishedAt = new Date().toISOString();
+  }
+}
+
+async function msSyncAllInner(auth) {
   msDebug = { lastRun: new Date().toISOString(), storesFetched: [], perStore: [], errors: [] };
   await msFetchStores();
   msDebug.storesFetched = msStores.map(s => s.name);
@@ -449,7 +479,7 @@ async function msSyncAll() {
   try {
     let offset = 0;
     for (let page = 0; page < 400; page++) {
-      const r = await fetch(`${MS_API}/entity/assortment?limit=1000&offset=${offset}`, { headers });
+      const r = await msFetch(`${MS_API}/entity/assortment?limit=1000&offset=${offset}`, { headers });
       if (!r.ok) { const b = await r.text().catch(() => ''); msDebug.errors.push(`assortment HTTP ${r.status} ${b.slice(0, 120)}`); break; }
       const data = await r.json();
       const batch = data.rows || [];
@@ -478,7 +508,7 @@ async function msSyncAll() {
   try {
     let offset = 0;
     for (let p = 0; p < 400; p++) {
-      const r = await fetch(`${MS_API}/report/stock/bystore?limit=1000&offset=${offset}`, { headers });
+      const r = await msFetch(`${MS_API}/report/stock/bystore?limit=1000&offset=${offset}`, { headers });
       if (!r.ok) { const b = await r.text().catch(() => ''); msDebug.errors.push(`bystore HTTP ${r.status} ${b.slice(0, 120)}`); break; }
       const data = await r.json();
       const rows = data.rows || [];

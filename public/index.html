@@ -914,9 +914,14 @@ function renderMoysklad() {
 
     if (info) {
         if (!models.length) {
-            info.textContent = msData.updatedAt
-                ? 'Сейчас нет товаров с остатком. Появится приход — товар покажется автоматически.'
-                : 'МойСклад ещё синхронизируется…';
+            const sync = msData.sync || {};
+            if (sync.status === 'error') {
+                info.textContent = '⚠️ Ошибка синхронизации МойСклад: ' + (sync.lastError || 'неизвестно');
+            } else if (sync.status === 'running' || (!msData.updatedAt && sync.status !== 'error')) {
+                info.textContent = 'МойСклад ещё синхронизируется… (это занимает 1–2 минуты)';
+            } else {
+                info.textContent = 'Сейчас нет товаров с остатком. Появится приход — товар покажется автоматически.';
+            }
         } else {
             const upd = msData.updatedAt
                 ? new Date(msData.updatedAt).toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})
