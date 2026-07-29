@@ -325,9 +325,10 @@ let msInfoAll = new Map();// assortmentId -> инфо ВСЕХ товаров (�
 const MS_SKIP_STORES = (process.env.MOYSKLAD_SKIP_STORES || '')
   .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
-// Переименование складов МойСклад в названия на сайте
+// Переименование складов МойСклад (если названия отличаются от сайта).
+// Сейчас в МойСклад склады уже названы как на сайте — карта пустая.
 const MS_STORE_RENAME = {};
-(process.env.MOYSKLAD_STORE_MAP || 'Основной склад=Овир,Скечерс Ашан=Ашан')
+(process.env.MOYSKLAD_STORE_MAP || '')
   .split(',').forEach(pair => {
     const [from, to] = pair.split('=').map(s => (s || '').trim());
     if (from && to) MS_STORE_RENAME[from.toLowerCase()] = to;
@@ -565,7 +566,7 @@ function isAllowed(chatId) {
   return TG_ADMINS.includes(String(chatId));
 }
 
-const WH_NAMES = { '1': 'Фаровон', '2': 'Ovir', '3': 'Ашан' };
+const WH_NAMES = { '1': 'Фаровон', '2': 'Овир', '3': 'Ашан', '4': 'Валаматзода' };
 function itemLine(it) {
   const place = [
     it.warehouse ? `склад ${WH_NAMES[it.warehouse] || it.warehouse}` : null,

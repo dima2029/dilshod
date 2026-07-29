@@ -391,7 +391,8 @@
 <div class="tabs">
     <button class="tab active" onclick="switchTab('search',this)">🔍 Поиск</button>
     <button class="tab" onclick="switchTab('farovon',this)">🏢 Фаровон</button>
-    <button class="tab" onclick="switchTab('ovir',this)">🏢 Ovir</button>
+    <button class="tab" onclick="switchTab('ovir',this)">🏢 Овир</button>
+    <button class="tab" onclick="switchTab('valam',this)">🏢 Валаматзода</button>
     <button class="tab" onclick="switchTab('ashan',this)">🏢 Ашан</button>
     <button class="tab" onclick="switchTab('moysklad',this)">📊 Остатки</button>
     <button class="tab" onclick="switchTab('settings',this)">⚙️ Настройки</button>
@@ -403,7 +404,8 @@
     <div class="sidebar">
         <div class="sidebar-label">Склады</div>
         <div class="sidebar-item" onclick="switchTabByName('farovon')">🏢 Фаровон <span class="s-count" id="sb-far">0</span></div>
-        <div class="sidebar-item" onclick="switchTabByName('ovir')">🏢 Ovir <span class="s-count" id="sb-ovir">0</span></div>
+        <div class="sidebar-item" onclick="switchTabByName('ovir')">🏢 Овир <span class="s-count" id="sb-ovir">0</span></div>
+        <div class="sidebar-item" onclick="switchTabByName('valam')">🏢 Валаматзода <span class="s-count" id="sb-valam">0</span></div>
         <div class="sidebar-item" onclick="switchTabByName('ashan')">🏢 Ашан <span class="s-count" id="sb-ashan">0</span></div>
         <div class="sidebar-label">Статус</div>
         <div class="sidebar-item">✅ Распределены <span class="s-count" id="sb-dist">0</span></div>
@@ -497,17 +499,33 @@
             </div>
         </div>
 
-        <!-- OVIR -->
+        <!-- ОВИР -->
         <div id="ovir" class="tab-content">
             <div class="card">
                 <div class="card-header">
-                    <span class="card-title">🏢 Склад Skechers Ovir</span>
+                    <span class="card-title">🏢 Склад Овир</span>
                     <div class="card-actions"><button class="btn-outline green" onclick="printWh('2')">🖨️ Печать</button></div>
                 </div>
                 <div class="table-wrap">
                     <table>
                         <thead><tr><th>Артикул</th><th>Название</th><th>Локация</th><th>📊 Остаток</th><th>Действия</th></tr></thead>
                         <tbody id="ovirBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ВАЛАМАТЗОДА -->
+        <div id="valam" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">🏢 Склад Валаматзода</span>
+                    <div class="card-actions"><button class="btn-outline green" onclick="printWh('4')">🖨️ Печать</button></div>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Артикул</th><th>Название</th><th>Локация</th><th>📊 Остаток</th><th>Действия</th></tr></thead>
+                        <tbody id="valamBody"></tbody>
                     </table>
                 </div>
             </div>
@@ -551,7 +569,8 @@
             <div class="stats-grid">
                 <div class="stat-card accent"><div class="s-val" id="sTotal2">0</div><div class="s-lbl">Всего</div></div>
                 <div class="stat-card"><div class="s-val" id="sFar2">0</div><div class="s-lbl">Фаровон</div></div>
-                <div class="stat-card"><div class="s-val" id="sOvir2">0</div><div class="s-lbl">Ovir</div></div>
+                <div class="stat-card"><div class="s-val" id="sOvir2">0</div><div class="s-lbl">Овир</div></div>
+                <div class="stat-card"><div class="s-val" id="sValam2">0</div><div class="s-lbl">Валаматзода</div></div>
                 <div class="stat-card"><div class="s-val" id="sAsh2">0</div><div class="s-lbl">Ашан</div></div>
                 <div class="stat-card"><div class="s-val" id="sDist2">0</div><div class="s-lbl">Распределено</div></div>
                 <div class="stat-card"><div class="s-val warn" id="sPend2">0</div><div class="s-lbl">Ожидают</div></div>
@@ -594,7 +613,8 @@
 <div class="wh-sheet" id="whSheet">
     <div class="wh-sheet-title">Выберите склад</div>
     <div class="wh-sheet-item" onclick="bnSwitchWh('farovon')">🏢 Фаровон <span class="s-count" id="bs-far">0</span></div>
-    <div class="wh-sheet-item" onclick="bnSwitchWh('ovir')">🏢 Skechers Ovir <span class="s-count" id="bs-ovir">0</span></div>
+    <div class="wh-sheet-item" onclick="bnSwitchWh('ovir')">🏢 Овир <span class="s-count" id="bs-ovir">0</span></div>
+    <div class="wh-sheet-item" onclick="bnSwitchWh('valam')">🏢 Валаматзода <span class="s-count" id="bs-valam">0</span></div>
     <div class="wh-sheet-item" onclick="bnSwitchWh('ashan')">🏢 Skechers Ашан <span class="s-count" id="bs-ashan">0</span></div>
     <div class="wh-sheet-item" onclick="closeWhSheet(); bnSwitch('moysklad','bn-wh')">📊 Остатки МойСклад <span class="s-count" id="bs-ms">0</span></div>
     <button style="width:100%;margin-top:6px;padding:0.75rem;border-radius:10px;border:1px solid var(--border);background:var(--bg);font-size:0.9rem;cursor:pointer;" onclick="closeWhSheet()">Отмена</button>
@@ -604,9 +624,10 @@
 <div id="moveModal" class="modal">
     <div class="modal-box">
         <h2>📤 Куда переместить?</h2>
-        <button class="wh-btn" onclick="doMove('1')"><div class="wh-name">🏢 Фаровон</div><div class="wh-desc">Основной склад</div></button>
-        <button class="wh-btn" onclick="doMove('2')"><div class="wh-name">🏢 Skechers Ovir</div><div class="wh-desc">Партнёрский склад</div></button>
-        <button class="wh-btn" onclick="doMove('3')"><div class="wh-name">🏢 Skechers Ашан</div><div class="wh-desc">Торговый центр</div></button>
+        <button class="wh-btn" onclick="doMove('1')"><div class="wh-name">🏢 Фаровон</div></button>
+        <button class="wh-btn" onclick="doMove('2')"><div class="wh-name">🏢 Овир</div></button>
+        <button class="wh-btn" onclick="doMove('4')"><div class="wh-name">🏢 Валаматзода</div></button>
+        <button class="wh-btn" onclick="doMove('3')"><div class="wh-name">🏢 Ашан</div></button>
         <button class="m-cancel" style="width:100%;margin-top:0.5rem;" onclick="closeModal('moveModal')">Отмена</button>
     </div>
 </div>
@@ -718,7 +739,7 @@ function switchTab(name, el) {
 }
 
 function switchTabByName(name) {
-    const names = ['search','farovon','ovir','ashan','moysklad','settings'];
+    const names = ['search','farovon','ovir','valam','ashan','moysklad','settings'];
     const idx = names.indexOf(name);
     const tabs = document.querySelectorAll('.tab');
     if (idx >= 0 && tabs[idx]) switchTab(name, tabs[idx]);
@@ -728,7 +749,7 @@ function bnSwitch(name, bnId) {
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.getElementById(name).classList.add('active');
-    const tabNames = ['search','farovon','ovir','ashan','moysklad','settings'];
+    const tabNames = ['search','farovon','ovir','valam','ashan','moysklad','settings'];
     const tabs = document.querySelectorAll('.tab');
     const idx = tabNames.indexOf(name);
     if (idx >= 0 && tabs[idx]) tabs[idx].classList.add('active');
@@ -933,7 +954,7 @@ async function addFromMs(article) {
     alert('✅ Добавлено в Фаровон: ' + up + '\nЛокацию (этаж/ряд/ячейку) можно задать во вкладке Фаровон.');
 }
 
-function renderAll() { renderFarovon(); renderWh('ovirBody','2',5); renderWh('ashanBody','3',5); renderStats(); triggerStockLoads(); }
+function renderAll() { renderFarovon(); renderWh('ovirBody','2',5); renderWh('valamBody','4',5); renderWh('ashanBody','3',5); renderStats(); triggerStockLoads(); }
 
 function renderFarovon() {
     let list = items.filter(i => i.warehouse === '1');
@@ -977,17 +998,19 @@ function renderStats() {
     const total = items.length;
     const far   = items.filter(i=>i.warehouse==='1').length;
     const ovir  = items.filter(i=>i.warehouse==='2').length;
+    const valam = items.filter(i=>i.warehouse==='4').length;
     const ash   = items.filter(i=>i.warehouse==='3').length;
     const dist  = items.filter(i=>i.floor&&i.row&&i.cell).length;
     const pend  = far - items.filter(i=>i.warehouse==='1'&&i.floor&&i.row&&i.cell).length;
     const set = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
     set('sTotal',total); set('sTotal2',total);
     set('sFar',far);     set('sFar2',far);
-    set('sOvir2',ovir);  set('sAsh2',ash);
+    set('sOvir2',ovir);  set('sAsh2',ash);  set('sValam2',valam);
     set('sDist',dist);   set('sDist2',dist);
     set('sPend',pend);   set('sPend2',pend);
-    set('sb-far',far);   set('sb-ovir',ovir); set('sb-ashan',ash);
+    set('sb-far',far);   set('sb-ovir',ovir); set('sb-valam',valam); set('sb-ashan',ash);
     set('sb-dist',dist); set('sb-pend',pend);
+    set('bs-far',far);   set('bs-ovir',ovir); set('bs-valam',valam); set('bs-ashan',ash);
 }
 
 function emptyRow(c) {
@@ -1000,7 +1023,8 @@ function searchItem() {
     if (!q) { el.innerHTML = ''; return; }
     const item = items.find(i => i.article === q);
     if (!item) { el.innerHTML = '<div class="error-box">❌ Товар не найден</div>'; return; }
-    const wh = item.warehouse==='1'?'Фаровон':item.warehouse==='2'?'Skechers Ovir':'Skechers Ашан';
+    const whNamesS = { '1':'Фаровон', '2':'Овир', '3':'Ашан', '4':'Валаматзода' };
+    const wh = whNamesS[item.warehouse] || '—';
     const loc = item.floor ? `Эт.${item.floor} · Ряд ${item.row} · Яч. ${item.cell}` : 'Без конкретной локации';
     el.innerHTML = `<div class="found-card">
         <div class="f-article">✅ ${item.article}</div>
@@ -1063,10 +1087,10 @@ async function clearAll() {
 
 function exportAll() {
     const wb = XLSX.utils.book_new();
-    const whNames = { '1':'Фаровон', '2':'Ovir', '3':'Ашан' };
+    const whNames = { '1':'Фаровон', '2':'Овир', '3':'Ашан', '4':'Валаматзода' };
     const allData = items.map(i => ({ 'Артикул':i.article, 'Название':i.name||'—', 'Склад':whNames[i.warehouse]||'—', 'Этаж':i.floor||'—', 'Ряд':i.row||'—', 'Ячейка':i.cell||'—' }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(allData), 'Все товары');
-    ['1','2','3'].forEach(wh => {
+    ['1','2','4','3'].forEach(wh => {
         const list = items.filter(i => i.warehouse === wh).map(i => ({ 'Артикул':i.article, 'Название':i.name||'—', 'Этаж':i.floor||'—', 'Ряд':i.row||'—', 'Ячейка':i.cell||'—' }));
         if (list.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(list), whNames[wh]);
     });
@@ -1134,7 +1158,7 @@ async function confirmEdit() {
 }
 
 function printWh(wh) {
-    const names = {'1':'Фаровон','2':'Skechers Ovir','3':'Skechers Ашан'};
+    const names = {'1':'Фаровон','2':'Овир','3':'Ашан','4':'Валаматзода'};
     const list = items.filter(i => i.warehouse === wh);
     let html = `<html><head><meta charset="UTF-8"><title>${names[wh]}</title>
     <style>body{font-family:Arial;padding:20px}h1{color:#1e1b4b}table{width:100%;border-collapse:collapse}th{background:#1e1b4b;color:#a5b4fc;padding:10px}td{padding:10px;border-bottom:1px solid #eee}tr:nth-child(even){background:#f8f9fa}.loc{color:#4f46e5;font-weight:bold}</style>
