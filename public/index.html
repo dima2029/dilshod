@@ -867,11 +867,17 @@ function escHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 }
 
+let _msRenderedKey = null;
 async function loadMoysklad() {
     try {
         const r = await fetch('/api/moysklad');
         msData = await r.json();
     } catch { /* оставляем прежние данные */ }
+    // Перерисовываем только когда данные реально изменились (updatedAt) или идёт поиск
+    const key = (msData.updatedAt || '') + '|' + (msData.sync && msData.sync.status || '') + '|' + (msData.rows ? msData.rows.length : 0);
+    const q = (document.getElementById('msSearch')?.value || '').trim();
+    if (key === _msRenderedKey && !q) return;
+    _msRenderedKey = key;
     renderMoysklad();
 }
 

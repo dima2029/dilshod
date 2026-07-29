@@ -2,6 +2,11 @@ const express = require('express');
 const { Pool } = require('pg');
 const path = require('path');
 
+// Не даём процессу упасть из-за необработанной ошибки (иначе Railway перезапускает
+// сервер, каталог МойСклад теряется и данные «пропадают» с экрана).
+process.on('unhandledRejection', (e) => console.error('⚠️ unhandledRejection:', e && e.message ? e.message : e));
+process.on('uncaughtException',  (e) => console.error('⚠️ uncaughtException:', e && e.message ? e.message : e));
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -149,17 +154,8 @@ app.get('/api/stock/:article', async (req, res) => {
 // Каталог МойСклад — сгруппирован по артикулу (сумма остатков по размерам),
 // только товары с остатком > 0. Обновляется синхронизацией каждые 20 минут.
 app.get('/api/moysklad', (req, res) => {
-  const rows = [...msModels.values()]
-    .map(m => ({
-      model: m.model, stock: m.stock, byStore: m.byStore,
-      colors: [...m.colors.values()].map(c => ({
-        article: c.article, color: c.color, stock: c.stock, byStore: c.byStore, price: c.price,
-        sizes: [...c.sizes.values()].filter(s => (s.stock || 0) > 0).sort((a, b) => (parseFloat(a.size) || 999) - (parseFloat(b.size) || 999))
-      }))
-    }))
-    .filter(m => m.stock > 0)
-    .sort((a, b) => b.stock - a.stock);
-  res.json({ updatedAt: msCatalog.updatedAt, sync: msSyncState, stores: msStoreNames, count: rows.length, rows });
+  // Отдаём заранее собранный каталог (см. rebuild) — без тяжёлой сборки на каждый запрос
+  res.json({ updatedAt: msPublic.updatedAt, sync: msSyncState, stores: msPublic.stores, count: msPublic.count, rows: msPublic.rows });
 });
 
 // Список складов МойСклад — чтобы связать их со складами на сайте
@@ -332,6 +328,9 @@ async function fetchStock(article) {
 
 // ---- Полная синхронизация каталога МойСклад (каждые 20 минут) ----
 let msCatalog = { updatedAt: null, count: 0 };
+// Готовый ответ для /api/moysklad — собирается ОДИН раз при синхронизации,
+// а не на каждый запрос (иначе тяжёлая сборка на каждый опрос раз в 60с грузит память).
+let msPublic = { updatedAt: null, stores: [], count: 0, rows: [] };
 let msStoreNames = [];    // порядок складов для колонок на сайте
 let msModels = new Map(); // МОДЕЛЬ(upper) -> { model, stock, byStore, colors:Map }
 let msGroups = new Map(); // базовый артикул 402183L-BBLM (upper) -> цветовая группа
@@ -477,11 +476,30 @@ async function msSyncAllInner(auth) {
     for (const inf of info.values()) {
       if ((Number(inf.totalStock) || 0) > 0) addItem(inf);
     }
+    // Не затираем ранее собранный каталог пустышкой (например, если очередной
+    // проход к МойСклад вернул ошибку/пусто) — оставляем прошлые данные на экране.
+    if (models.size === 0 && msModels.size > 0) {
+      console.warn('⚠️ МойСклад: новый проход пуст — сохраняю прошлые данные');
+      return;
+    }
     msStoreNames = stores.map(s => s.display || s.name);
     msInfoAll = info; // полный каталог для поиска по любому артикулу
     msModels = models;
     msGroups = groups;
-    msCatalog = { updatedAt: new Date().toISOString(), count: models.size };
+    const updatedAt = new Date().toISOString();
+    msCatalog = { updatedAt, count: models.size };
+    // Собираем готовый ответ для сайта один раз
+    const rows = [...models.values()]
+      .map(m => ({
+        model: m.model, stock: m.stock, byStore: m.byStore,
+        colors: [...m.colors.values()].map(c => ({
+          article: c.article, color: c.color, stock: c.stock, byStore: c.byStore, price: c.price,
+          sizes: [...c.sizes.values()].filter(s => (s.stock || 0) > 0).sort((a, b) => (parseFloat(a.size) || 999) - (parseFloat(b.size) || 999))
+        }))
+      }))
+      .filter(m => m.stock > 0)
+      .sort((a, b) => b.stock - a.stock);
+    msPublic = { updatedAt, stores: msStoreNames, count: rows.length, rows };
   }
 
   // 1) Полный ассортимент (товары + модификации). Остаток лежит на МОДИФИКАЦИЯХ
