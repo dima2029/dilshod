@@ -404,11 +404,6 @@ async function msSyncAll() {
 
   const models = new Map();
   const groups = new Map();
-
-  function rowPrice(it) {
-    const v = it.salePrice != null ? it.salePrice : it.price;
-    return v != null ? v / 100 : null;
-  }
   function mergeStore(dst, src) { for (const k in src) dst[k] = (dst[k] || 0) + src[k]; }
 
   // Добавляет позицию: .stock = верный итог (из stock/all), byStore = раскладка (из bystore)
@@ -436,41 +431,46 @@ async function msSyncAll() {
 
   const info = new Map(); // id -> инфо
 
-  // 1) /report/stock/all (без фильтра) — ВЕРНЫЕ суммы + названия (там есть 216301)
+  // 1) Полный ассортимент (товары + модификации). Остаток лежит на МОДИФИКАЦИЯХ
+  //    (у товара с модификациями stock = 0). База модификации берётся из НАЗВАНИЯ,
+  //    т.к. code у модификации = штрихкод.
   try {
     let offset = 0;
-    for (let page = 0; page < 300; page++) {
-      const r = await fetch(`${MS_API}/report/stock/all?limit=1000&offset=${offset}`, { headers });
-      if (!r.ok) { const b = await r.text().catch(() => ''); msDebug.errors.push(`stock/all HTTP ${r.status} ${b.slice(0, 120)}`); break; }
+    for (let page = 0; page < 400; page++) {
+      const r = await fetch(`${MS_API}/entity/assortment?limit=1000&offset=${offset}`, { headers });
+      if (!r.ok) { const b = await r.text().catch(() => ''); msDebug.errors.push(`assortment HTTP ${r.status} ${b.slice(0, 120)}`); break; }
       const data = await r.json();
       const batch = data.rows || [];
+      if (!batch.length) break;
       for (const it of batch) {
         const id = String(it.meta && it.meta.href || '').split('?')[0].split('/').pop();
-        const base = baseArticle({ code: it.code, name: it.name, article: it.article });
+        const isVariant = it.meta && it.meta.type === 'variant';
+        const src = isVariant ? (it.name || it.code) : (it.code || it.name);
+        const base = String(src || it.article || '').split(/\s*\(/)[0].trim();
         if (!id || !base) continue;
         info.set(id, {
           base, baseU: base.toUpperCase(), model: modelKey(base),
           color: colorFromName({ name: it.name }) || base,
           size: sizeFromName({ name: it.name }),
-          variantArticle: it.article || '', price: rowPrice(it),
-          totalStock: Number(it.stock) || 0, byStore: {}
+          variantArticle: it.article || it.code || '',
+          price: msPrice(it), totalStock: Number(it.stock) || 0, byStore: {}
         });
       }
       offset += batch.length;
-      const size = data.meta && data.meta.size ? data.meta.size : offset;
-      if (batch.length < 1000 || offset >= size) break;
     }
-  } catch (e) { msDebug.errors.push('stock/all ' + e.message); }
+    msDebug.infoCount = info.size;
+  } catch (e) { msDebug.errors.push('assortment ' + e.message); }
 
-  // 2) /report/stock/bystore — раскладка по складам (join по id того же отчёта)
+  // 2) /report/stock/bystore — раскладка по складам (join по id модификации)
   let matched = 0;
   try {
     let offset = 0;
-    for (let p = 0; p < 2000; p++) {
+    for (let p = 0; p < 400; p++) {
       const r = await fetch(`${MS_API}/report/stock/bystore?limit=1000&offset=${offset}`, { headers });
       if (!r.ok) { const b = await r.text().catch(() => ''); msDebug.errors.push(`bystore HTTP ${r.status} ${b.slice(0, 120)}`); break; }
       const data = await r.json();
       const rows = data.rows || [];
+      if (!rows.length) break;
       for (const row of rows) {
         const id = String(row.meta && row.meta.href || '').split('?')[0].split('/').pop();
         const inf = info.get(id);
@@ -484,13 +484,11 @@ async function msSyncAll() {
         }
       }
       offset += rows.length;
-      const size = data.meta && data.meta.size ? data.meta.size : offset;
-      if (rows.length < 1000 || offset >= size) break;
     }
     msDebug.bystoreMatched = matched;
   } catch (e) { msDebug.errors.push('bystore ' + e.message); }
 
-  // 3) строим модели -> цвета -> размеры (Всего из stock/all, колонки из bystore)
+  // 3) строим модели -> цвета -> размеры (Всего = сумма остатков модификаций)
   for (const inf of info.values()) {
     if ((Number(inf.totalStock) || 0) > 0) addItem(inf);
   }
