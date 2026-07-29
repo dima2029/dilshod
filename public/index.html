@@ -353,6 +353,7 @@
         .add-ms:active { transform: scale(0.96); }
         .ms-added { color: var(--success); font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
         .ms-model td { background: var(--primary-light); font-size: 0.85rem; }
+        .sz-chip { display: inline-block; background: var(--primary-light); color: var(--primary-dark); border-radius: 6px; padding: 0.1rem 0.45rem; font-size: 0.72rem; font-weight: 600; margin: 0.1rem 0; white-space: nowrap; }
         .ms-color-name { color: #555; padding-left: 1.25rem; }
         .ms-caret { color: var(--primary); font-size: 0.7rem; display: inline-block; width: 0.9rem; }
         .ms-size td { background: #fafbff; font-size: 0.8rem; color: #777; }
@@ -479,7 +480,15 @@
             </div>
             <div class="card">
                 <div class="card-header">
-                    <span class="card-title">🏢 Склад Фаровон</span>
+                    <span class="card-title">📊 Остатки МойСклад — Фаровон</span>
+                    <div class="card-actions"><button class="btn-outline" onclick="loadMoysklad(true)">🔄 Обновить</button></div>
+                </div>
+                <div class="info-box" id="msInfo-1">Загрузка остатков…</div>
+                <div class="table-wrap" id="msWh-1"></div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">📍 Размещение — Фаровон</span>
                     <div class="card-actions">
                         <button class="btn-outline" onclick="refreshStocks()">🔄 Остатки</button>
                         <button class="btn-outline green" onclick="printWh('1')">🖨️ Печать</button>
@@ -503,7 +512,15 @@
         <div id="ovir" class="tab-content">
             <div class="card">
                 <div class="card-header">
-                    <span class="card-title">🏢 Склад Овир</span>
+                    <span class="card-title">📊 Остатки МойСклад — Овир</span>
+                    <div class="card-actions"><button class="btn-outline" onclick="loadMoysklad(true)">🔄 Обновить</button></div>
+                </div>
+                <div class="info-box" id="msInfo-2">Загрузка остатков…</div>
+                <div class="table-wrap" id="msWh-2"></div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">📍 Размещение — Овир</span>
                     <div class="card-actions"><button class="btn-outline green" onclick="printWh('2')">🖨️ Печать</button></div>
                 </div>
                 <div class="table-wrap">
@@ -519,7 +536,15 @@
         <div id="valam" class="tab-content">
             <div class="card">
                 <div class="card-header">
-                    <span class="card-title">🏢 Склад Валаматзода</span>
+                    <span class="card-title">📊 Остатки МойСклад — Валаматзода</span>
+                    <div class="card-actions"><button class="btn-outline" onclick="loadMoysklad(true)">🔄 Обновить</button></div>
+                </div>
+                <div class="info-box" id="msInfo-4">Загрузка остатков…</div>
+                <div class="table-wrap" id="msWh-4"></div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">📍 Размещение — Валаматзода</span>
                     <div class="card-actions"><button class="btn-outline green" onclick="printWh('4')">🖨️ Печать</button></div>
                 </div>
                 <div class="table-wrap">
@@ -535,7 +560,15 @@
         <div id="ashan" class="tab-content">
             <div class="card">
                 <div class="card-header">
-                    <span class="card-title">🏢 Склад Skechers Ашан</span>
+                    <span class="card-title">📊 Остатки МойСклад — Ашан</span>
+                    <div class="card-actions"><button class="btn-outline" onclick="loadMoysklad(true)">🔄 Обновить</button></div>
+                </div>
+                <div class="info-box" id="msInfo-3">Загрузка остатков…</div>
+                <div class="table-wrap" id="msWh-3"></div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">📍 Размещение — Ашан</span>
                     <div class="card-actions"><button class="btn-outline green" onclick="printWh('3')">🖨️ Печать</button></div>
                 </div>
                 <div class="table-wrap">
@@ -893,10 +926,68 @@ function renderMoysklad() {
         }
     }
 
+    // Остатки в разрезе каждого склада (вкладки Фаровон/Овир/Валаматзода/Ашан)
+    renderAllWhStock();
+
     // Если в поиске что-то введено — ищем по всему каталогу через сервер
     const q = (document.getElementById('msSearch')?.value || '').trim();
     if (q) { doMsSearch(q); return; }
     wrap.innerHTML = msBuildTable(models, stores);
+}
+
+// Остатки МойСклад в разрезе одного склада (для вкладок Фаровон/Овир/Валаматзода/Ашан)
+const WH_STORE = { 'msWh-1':'Фаровон', 'msWh-2':'Овир', 'msWh-4':'Валаматзода', 'msWh-3':'Ашан' };
+
+function renderWhStock(containerId, storeName) {
+    const wrap = document.getElementById(containerId);
+    if (!wrap) return 0;
+    const rows = (msData && msData.rows) ? msData.rows : [];
+    let total = 0, models = 0, body = '';
+    for (const m of rows) {
+        const colors = (m.colors || []).filter(c => ((c.byStore && c.byStore[storeName]) || 0) > 0);
+        if (!colors.length) continue;
+        models++;
+        let mTotal = 0;
+        let colorRows = '';
+        for (const c of colors) {
+            const cQty = (c.byStore && c.byStore[storeName]) || 0;
+            mTotal += cQty;
+            const sizes = (c.sizes || [])
+                .filter(s => ((s.byStore && s.byStore[storeName]) || 0) > 0)
+                .map(s => `<span class="sz-chip">${escHtml(s.size)}×${s.byStore[storeName]}</span>`)
+                .join(' ');
+            colorRows += `<tr>
+                <td>${escHtml(c.color)} <span style="color:#aaa">${escHtml(c.article)}</span></td>
+                <td>${sizes || '—'}</td>
+                <td class="stk-cell"><strong>${cQty}</strong></td>
+                <td>${items.some(i => i.article === String(c.article).toUpperCase())
+                    ? '<span class="ms-added">✅</span>'
+                    : `<button class="action-btn add-ms" onclick="addFromMsTo('${jsStr(c.article)}','${escHtml(storeName)}')">➕ Разместить</button>`}</td>
+            </tr>`;
+        }
+        total += mTotal;
+        body += `<tr class="ms-model"><td colspan="4"><strong>📦 ${escHtml(m.model)}</strong> — ${mTotal} шт</td></tr>${colorRows}`;
+    }
+    const info = document.getElementById(containerId.replace('msWh-', 'msInfo-'));
+    if (!body) {
+        wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">📦</div><div>Нет остатков на этом складе</div></div>';
+        if (info) info.textContent = (msData && msData.updatedAt) ? 'Нет остатков на этом складе.' : 'МойСклад ещё синхронизируется…';
+        return 0;
+    }
+    wrap.innerHTML = `<table><thead><tr><th>Цвет / Артикул</th><th>Размеры</th><th>Кол-во</th><th>Действие</th></tr></thead><tbody>${body}</tbody></table>`;
+    if (info) info.innerHTML = `Моделей: <strong>${models}</strong> · всего <strong>${total}</strong> шт на складе ${escHtml(storeName)}`;
+    return total;
+}
+
+function renderAllWhStock() {
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    for (const [cid, store] of Object.entries(WH_STORE)) {
+        const t = renderWhStock(cid, store);
+        const wh = cid.split('-')[1]; // '1'|'2'|'4'|'3'
+        const map = { '1':'far', '2':'ovir', '4':'valam', '3':'ashan' };
+        set('sb-' + map[wh], t);
+        set('bs-' + map[wh], t);
+    }
 }
 
 let msSearchTimer = null;
@@ -954,6 +1045,24 @@ async function addFromMs(article) {
     alert('✅ Добавлено в Фаровон: ' + up + '\nЛокацию (этаж/ряд/ячейку) можно задать во вкладке Фаровон.');
 }
 
+// Разместить товар из остатков МойСклад в конкретный склад (по имени склада)
+async function addFromMsTo(article, storeName) {
+    const up = String(article).toUpperCase();
+    if (items.some(i => i.article === up)) { alert('ℹ️ Товар уже размещён на складе'); return; }
+    const whByStore = { 'Фаровон':'1', 'Овир':'2', 'Валаматзода':'4', 'Ашан':'3' };
+    const wh = whByStore[storeName] || '1';
+    let name = up;
+    for (const m of (msData.rows || [])) {
+        const c = (m.colors || []).find(x => String(x.article) === String(article));
+        if (c) { name = (m.model + ' ' + c.color).trim(); break; }
+    }
+    const r = await api('POST', '/items', { article: up, name, warehouse: wh });
+    if (r.error) { alert('❌ ' + r.error); return; }
+    await loadItems();
+    renderMoysklad();
+    alert('✅ Размещено на складе ' + storeName + ': ' + up);
+}
+
 function renderAll() { renderFarovon(); renderWh('ovirBody','2',5); renderWh('valamBody','4',5); renderWh('ashanBody','3',5); renderStats(); triggerStockLoads(); }
 
 function renderFarovon() {
@@ -1008,9 +1117,8 @@ function renderStats() {
     set('sOvir2',ovir);  set('sAsh2',ash);  set('sValam2',valam);
     set('sDist',dist);   set('sDist2',dist);
     set('sPend',pend);   set('sPend2',pend);
-    set('sb-far',far);   set('sb-ovir',ovir); set('sb-valam',valam); set('sb-ashan',ash);
     set('sb-dist',dist); set('sb-pend',pend);
-    set('bs-far',far);   set('bs-ovir',ovir); set('bs-valam',valam); set('bs-ashan',ash);
+    // Счётчики складов в боковом меню = остатки МойСклад по складам (renderAllWhStock)
 }
 
 function emptyRow(c) {
