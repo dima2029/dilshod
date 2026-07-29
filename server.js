@@ -154,7 +154,7 @@ app.get('/api/moysklad', (req, res) => {
       model: m.model, stock: m.stock, byStore: m.byStore,
       colors: [...m.colors.values()].map(c => ({
         article: c.article, color: c.color, stock: c.stock, byStore: c.byStore, price: c.price,
-        sizes: [...c.sizes.values()].sort((a, b) => (parseFloat(a.size) || 999) - (parseFloat(b.size) || 999))
+        sizes: [...c.sizes.values()].filter(s => (s.stock || 0) > 0).sort((a, b) => (parseFloat(a.size) || 999) - (parseFloat(b.size) || 999))
       }))
     }))
     .filter(m => m.stock > 0)
@@ -214,7 +214,7 @@ function groupInfos(infos) {
     model: m.model, stock: m.stock, byStore: m.byStore,
     colors: [...m.colors.values()].map(c => ({
       article: c.article, color: c.color, stock: c.stock, byStore: c.byStore, price: c.price,
-      sizes: [...c.sizes.values()].sort((a, b) => (parseFloat(a.size) || 999) - (parseFloat(b.size) || 999))
+      sizes: [...c.sizes.values()].filter(s => (s.stock || 0) > 0).sort((a, b) => (parseFloat(a.size) || 999) - (parseFloat(b.size) || 999))
     }))
   }));
 }
@@ -325,6 +325,17 @@ let msInfoAll = new Map();// assortmentId -> инфо ВСЕХ товаров (�
 const MS_SKIP_STORES = (process.env.MOYSKLAD_SKIP_STORES || '')
   .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
+// Переименование складов МойСклад в названия на сайте
+const MS_STORE_RENAME = {};
+(process.env.MOYSKLAD_STORE_MAP || 'Основной склад=Овир,Скечерс Ашан=Ашан')
+  .split(',').forEach(pair => {
+    const [from, to] = pair.split('=').map(s => (s || '').trim());
+    if (from && to) MS_STORE_RENAME[from.toLowerCase()] = to;
+  });
+function storeDisplay(name) {
+  return MS_STORE_RENAME[String(name || '').trim().toLowerCase()] || name;
+}
+
 function msPrice(it) {
   return Array.isArray(it.salePrices) && it.salePrices[0]
     ? it.salePrices[0].value / 100 : null;
@@ -383,7 +394,7 @@ async function msFetchStores() {
     if (!r.ok) { console.error(`⚠️ МойСклад stores ${r.status}`); return; }
     const data = await r.json();
     msStores = (data.rows || [])
-      .map(s => ({ id: String(s.meta && s.meta.href || '').split('/').pop(), name: s.name || '' }))
+      .map(s => ({ id: String(s.meta && s.meta.href || '').split('/').pop(), name: s.name || '', display: storeDisplay(s.name || '') }))
       .filter(s => s.name && !MS_SKIP_STORES.includes(s.name.toLowerCase()));
     console.log(`🏬 МойСклад склады: ${msStores.map(s => s.name).join(', ')}`);
   } catch (e) {
@@ -480,7 +491,7 @@ async function msSyncAll() {
           const sName = sb.name || '';
           if (!sName || MS_SKIP_STORES.includes(sName.toLowerCase())) continue;
           const st = Number(sb.stock) || 0;
-          if (st > 0) inf.byStore[sName] = (inf.byStore[sName] || 0) + st;
+          if (st > 0) { const disp = storeDisplay(sName); inf.byStore[disp] = (inf.byStore[disp] || 0) + st; }
         }
       }
       offset += rows.length;
@@ -493,7 +504,7 @@ async function msSyncAll() {
     if ((Number(inf.totalStock) || 0) > 0) addItem(inf);
   }
 
-  msStoreNames = stores.map(s => s.name);
+  msStoreNames = stores.map(s => s.display || s.name);
   msInfoAll = info; // полный каталог для поиска по любому артикулу
   msModels = models;
   msGroups = groups;
