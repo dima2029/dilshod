@@ -375,6 +375,7 @@ async function msSyncAll() {
   await msFetchStores();
   msDebug.storesFetched = msStores.map(s => s.name);
   const headers = { 'Authorization': auth, 'Accept': 'application/json;charset=utf-8' };
+  const stores = msStores.length ? msStores : [{ id: null, name: 'Всего' }];
 
   const models = new Map();
   const groups = new Map();
@@ -402,28 +403,15 @@ async function msSyncAll() {
     s.stock += st; s.byStore[storeName] = (s.byStore[storeName] || 0) + st;
   }
 
-  // Остатки берём прямо из ассортимента, отдельно по каждому складу
-  // (assortment?filter=stockStore=... содержит ВСЕ позиции, включая те, что
-  //  теряются в отчёте /report/stock/bystore — например 216301).
-  const info = new Map();
-  const stores = msStores.length ? msStores : [{ id: null, name: 'Всего' }];
+  // Остатки берём из отчёта «По товарам» (/report/stock/all) отдельно по каждому
+  // складу. Именно он содержит правильные суммы (в т.ч. 216301), в отличие от
+  // /entity/assortment (даёт 0 по товарам с модификациями) и /report/stock/bystore
+  // (теряет часть позиций).
+  const info = new Map(); // ключ БАЗА|размер -> инфо
 
-  function upsertInfo(it) {
-    const id = String(it.meta && it.meta.href || '').split('?')[0].split('/').pop();
-    const base = baseArticle({ code: it.code, name: it.name, article: it.article });
-    if (!id || !base) return null;
-    let inf = info.get(id);
-    if (!inf) {
-      inf = {
-        base, baseU: base.toUpperCase(), model: modelKey(base),
-        color: colorFromName({ name: it.name }) || base,
-        size: sizeFromName({ name: it.name }),
-        variantArticle: it.article || '',
-        price: msPrice(it), byStore: {}
-      };
-      info.set(id, inf);
-    }
-    return inf;
+  function rowPrice(it) {
+    const v = it.salePrice != null ? it.salePrice : it.price;
+    return v != null ? v / 100 : null;
   }
 
   for (const store of stores) {
@@ -432,19 +420,31 @@ async function msSyncAll() {
       const storeHref = store.id ? `${MS_API}/entity/store/${store.id}` : null;
       let offset = 0;
       for (let page = 0; page < 300; page++) {
-        let url = `${MS_API}/entity/assortment?limit=1000&offset=${offset}`;
+        let url = `${MS_API}/report/stock/all?limit=1000&offset=${offset}`;
         if (storeHref) url += `&filter=stockStore=${storeHref}`;
         const r = await fetch(url, { headers });
         if (!r.ok) {
           const body = await r.text().catch(() => '');
-          msDebug.errors.push(`assortment «${store.name}» HTTP ${r.status} ${body.slice(0, 100)}`);
+          msDebug.errors.push(`stock/all «${store.name}» HTTP ${r.status} ${body.slice(0, 100)}`);
           break;
         }
         const data = await r.json();
         const batch = data.rows || [];
         for (const it of batch) {
-          const inf = upsertInfo(it);
-          if (!inf) continue;
+          const base = baseArticle({ code: it.code, name: it.name, article: it.article });
+          if (!base) continue;
+          const size = sizeFromName({ name: it.name });
+          const key = base.toUpperCase() + '|' + size;
+          let inf = info.get(key);
+          if (!inf) {
+            inf = {
+              base, baseU: base.toUpperCase(), model: modelKey(base),
+              color: colorFromName({ name: it.name }) || base,
+              size, variantArticle: it.article || '', price: rowPrice(it), byStore: {}
+            };
+            info.set(key, inf);
+          }
+          if (inf.price == null) inf.price = rowPrice(it);
           const st = Number(it.stock) || 0;
           if (st > 0) {
             inf.byStore[store.name] = (inf.byStore[store.name] || 0) + st;
@@ -457,7 +457,7 @@ async function msSyncAll() {
         if (batch.length < 1000 || offset >= size) break;
       }
       msDebug.perStore.push({ store: store.name, stock: seen });
-    } catch (e) { msDebug.errors.push(`assortment «${store.name}» ${e.message}`); }
+    } catch (e) { msDebug.errors.push(`stock/all «${store.name}» ${e.message}`); }
   }
 
   msStoreNames = stores.map(s => s.name);
