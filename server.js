@@ -424,6 +424,7 @@ let msDebug = { lastRun: null, storesFetched: [], perStore: [], errors: [] };
 async function msSyncAll() {
   const auth = msAuthHeader();
   if (!auth) { msSyncState = { status: 'error', startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), lastError: 'МойСклад не настроен: нет MOYSKLAD_TOKEN или MOYSKLAD_LOGIN/MOYSKLAD_PASSWORD в Railway' }; return; }
+  if (msSyncState.status === 'running') { console.log('⏳ МойСклад: синхронизация уже идёт, пропускаю запуск'); return; }
   msSyncState = { status: 'running', startedAt: new Date().toISOString(), finishedAt: null, lastError: null };
   try {
     await msSyncAllInner(auth);
@@ -444,34 +445,44 @@ async function msSyncAllInner(auth) {
   const headers = { 'Authorization': auth, 'Accept': 'application/json;charset=utf-8' };
   const stores = msStores.length ? msStores : [{ id: null, name: 'Всего' }];
 
-  const models = new Map();
-  const groups = new Map();
-  function mergeStore(dst, src) { for (const k in src) dst[k] = (dst[k] || 0) + src[k]; }
-
-  // Добавляет позицию: .stock = верный итог (из stock/all), byStore = раскладка (из bystore)
-  function addItem(inf) {
-    const total = Number(inf.totalStock) || 0;
-    let g = groups.get(inf.baseU);
-    if (!g) { g = { article: inf.base, model: inf.model, color: inf.color, stock: 0, byStore: {}, price: inf.price }; groups.set(inf.baseU, g); }
-    g.stock += total; mergeStore(g.byStore, inf.byStore);
-    if (g.price == null && inf.price != null) g.price = inf.price;
-
-    const mU = inf.model.toUpperCase();
-    let m = models.get(mU);
-    if (!m) { m = { model: inf.model, stock: 0, byStore: {}, colors: new Map() }; models.set(mU, m); }
-    m.stock += total; mergeStore(m.byStore, inf.byStore);
-    let c = m.colors.get(inf.baseU);
-    if (!c) { c = { article: inf.base, color: inf.color, stock: 0, byStore: {}, price: inf.price, sizes: new Map() }; m.colors.set(inf.baseU, c); }
-    c.stock += total; mergeStore(c.byStore, inf.byStore);
-    if (c.price == null && inf.price != null) c.price = inf.price;
-
-    const sz = inf.size || '—';
-    let s = c.sizes.get(sz);
-    if (!s) { s = { size: sz, article: inf.variantArticle || '', stock: 0, byStore: {} }; c.sizes.set(sz, s); }
-    s.stock += total; mergeStore(s.byStore, inf.byStore);
-  }
-
   const info = new Map(); // id -> инфо
+
+  // Построить модели -> цвета -> размеры из info и опубликовать в глобальные переменные.
+  // Вызывается дважды: после ассортимента (видны итоги) и после раскладки по складам (видны колонки).
+  function rebuild() {
+    const models = new Map();
+    const groups = new Map();
+    const mergeStore = (dst, src) => { for (const k in src) dst[k] = (dst[k] || 0) + src[k]; };
+    const addItem = (inf) => {
+      const total = Number(inf.totalStock) || 0;
+      let g = groups.get(inf.baseU);
+      if (!g) { g = { article: inf.base, model: inf.model, color: inf.color, stock: 0, byStore: {}, price: inf.price }; groups.set(inf.baseU, g); }
+      g.stock += total; mergeStore(g.byStore, inf.byStore);
+      if (g.price == null && inf.price != null) g.price = inf.price;
+
+      const mU = inf.model.toUpperCase();
+      let m = models.get(mU);
+      if (!m) { m = { model: inf.model, stock: 0, byStore: {}, colors: new Map() }; models.set(mU, m); }
+      m.stock += total; mergeStore(m.byStore, inf.byStore);
+      let c = m.colors.get(inf.baseU);
+      if (!c) { c = { article: inf.base, color: inf.color, stock: 0, byStore: {}, price: inf.price, sizes: new Map() }; m.colors.set(inf.baseU, c); }
+      c.stock += total; mergeStore(c.byStore, inf.byStore);
+      if (c.price == null && inf.price != null) c.price = inf.price;
+
+      const sz = inf.size || '—';
+      let s = c.sizes.get(sz);
+      if (!s) { s = { size: sz, article: inf.variantArticle || '', stock: 0, byStore: {} }; c.sizes.set(sz, s); }
+      s.stock += total; mergeStore(s.byStore, inf.byStore);
+    };
+    for (const inf of info.values()) {
+      if ((Number(inf.totalStock) || 0) > 0) addItem(inf);
+    }
+    msStoreNames = stores.map(s => s.display || s.name);
+    msInfoAll = info; // полный каталог для поиска по любому артикулу
+    msModels = models;
+    msGroups = groups;
+    msCatalog = { updatedAt: new Date().toISOString(), count: models.size };
+  }
 
   // 1) Полный ассортимент (товары + модификации). Остаток лежит на МОДИФИКАЦИЯХ
   //    (у товара с модификациями stock = 0). База модификации берётся из НАЗВАНИЯ,
@@ -503,13 +514,25 @@ async function msSyncAllInner(auth) {
     msDebug.infoCount = info.size;
   } catch (e) { msDebug.errors.push('assortment ' + e.message); }
 
-  // 2) /report/stock/bystore — раскладка по складам (join по id модификации)
-  let matched = 0;
-  try {
-    let offset = 0;
-    for (let p = 0; p < 400; p++) {
-      const r = await msFetch(`${MS_API}/report/stock/bystore?limit=1000&offset=${offset}`, { headers });
-      if (!r.ok) { const b = await r.text().catch(() => ''); msDebug.errors.push(`bystore HTTP ${r.status} ${b.slice(0, 120)}`); break; }
+  // Итоги видны сразу (вкладка «Остатки» с общими остатками), не дожидаясь раскладки по складам
+  rebuild();
+  console.log(`🔄 МойСклад: ассортимент ${info.size}, моделей ${msModels.size} — итоги опубликованы, идёт раскладка по складам…`);
+
+  // 2) /report/stock/bystore — раскладка по складам (join по id модификации).
+  //    stockMode=positiveOnly резко уменьшает выборку (только позиции с остатком > 0) —
+  //    без него отчёт по всему ассортименту очень тяжёлый и долгий.
+  async function runByStore(mode) {
+    let matched = 0, offset = 0, firstErr = null;
+    const maxPages = Math.ceil(info.size / 1000) + 5; // страховка от «бесконечной» пагинации
+    const q = mode ? `&stockMode=${mode}` : '';
+    for (let p = 0; p < maxPages; p++) {
+      const r = await msFetch(`${MS_API}/report/stock/bystore?limit=1000&offset=${offset}${q}`, { headers });
+      if (!r.ok) {
+        const b = await r.text().catch(() => '');
+        if (p === 0) { firstErr = `bystore HTTP ${r.status} ${b.slice(0, 120)}`; }
+        else { msDebug.errors.push(`bystore HTTP ${r.status} ${b.slice(0, 120)}`); }
+        break;
+      }
       const data = await r.json();
       const rows = data.rows || [];
       if (!rows.length) break;
@@ -527,20 +550,24 @@ async function msSyncAllInner(auth) {
       }
       offset += rows.length;
     }
+    return { matched, firstErr };
+  }
+
+  let matched = 0;
+  try {
+    let res = await runByStore('positiveOnly');
+    if (res.firstErr) { // параметр не поддержан — полный проход
+      msDebug.errors.push('positiveOnly не поддержан, полный проход');
+      res = await runByStore('');
+      if (res.firstErr) msDebug.errors.push(res.firstErr);
+    }
+    matched = res.matched;
     msDebug.bystoreMatched = matched;
   } catch (e) { msDebug.errors.push('bystore ' + e.message); }
 
-  // 3) строим модели -> цвета -> размеры (Всего = сумма остатков модификаций)
-  for (const inf of info.values()) {
-    if ((Number(inf.totalStock) || 0) > 0) addItem(inf);
-  }
-
-  msStoreNames = stores.map(s => s.display || s.name);
-  msInfoAll = info; // полный каталог для поиска по любому артикулу
-  msModels = models;
-  msGroups = groups;
-  msCatalog = { updatedAt: new Date().toISOString(), count: models.size };
-  console.log(`🔄 МойСклад: складов ${msStoreNames.length}, моделей ${models.size}, цветов ${groups.size}`);
+  // 3) финальная пересборка — теперь с раскладкой по складам (byStore)
+  rebuild();
+  console.log(`🔄 МойСклад готов: складов ${msStoreNames.length}, моделей ${msModels.size}, раскладка по ${matched} позициям`);
 }
 
 // ======================================================================
