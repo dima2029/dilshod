@@ -484,6 +484,9 @@
                     <div class="card-actions"><button class="btn-outline" onclick="loadMoysklad(true)">🔄 Обновить</button></div>
                 </div>
                 <div class="info-box" id="msInfo-1">Загрузка остатков…</div>
+                <div class="form-group" style="margin-bottom:0.75rem;">
+                    <input type="text" id="whSearch-1" placeholder="🔍 Поиск по артикулу / модели / цвету..." oninput="onWhSearchInput('1')">
+                </div>
                 <div class="table-wrap" id="msWh-1"></div>
             </div>
             <div class="card">
@@ -516,6 +519,9 @@
                     <div class="card-actions"><button class="btn-outline" onclick="loadMoysklad(true)">🔄 Обновить</button></div>
                 </div>
                 <div class="info-box" id="msInfo-2">Загрузка остатков…</div>
+                <div class="form-group" style="margin-bottom:0.75rem;">
+                    <input type="text" id="whSearch-2" placeholder="🔍 Поиск по артикулу / модели / цвету..." oninput="onWhSearchInput('2')">
+                </div>
                 <div class="table-wrap" id="msWh-2"></div>
             </div>
             <div class="card">
@@ -540,6 +546,9 @@
                     <div class="card-actions"><button class="btn-outline" onclick="loadMoysklad(true)">🔄 Обновить</button></div>
                 </div>
                 <div class="info-box" id="msInfo-4">Загрузка остатков…</div>
+                <div class="form-group" style="margin-bottom:0.75rem;">
+                    <input type="text" id="whSearch-4" placeholder="🔍 Поиск по артикулу / модели / цвету..." oninput="onWhSearchInput('4')">
+                </div>
                 <div class="table-wrap" id="msWh-4"></div>
             </div>
             <div class="card">
@@ -564,6 +573,9 @@
                     <div class="card-actions"><button class="btn-outline" onclick="loadMoysklad(true)">🔄 Обновить</button></div>
                 </div>
                 <div class="info-box" id="msInfo-3">Загрузка остатков…</div>
+                <div class="form-group" style="margin-bottom:0.75rem;">
+                    <input type="text" id="whSearch-3" placeholder="🔍 Поиск по артикулу / модели / цвету..." oninput="onWhSearchInput('3')">
+                </div>
                 <div class="table-wrap" id="msWh-3"></div>
             </div>
             <div class="card">
@@ -952,15 +964,26 @@ const WH_STORE = { 'msWh-1':'Фаровон', 'msWh-2':'Овир', 'msWh-4':'В�
 function renderWhStock(containerId, storeName) {
     const wrap = document.getElementById(containerId);
     if (!wrap) return 0;
+    const wh = containerId.split('-')[1];
+    const q = (document.getElementById('whSearch-' + wh)?.value || '').trim().toUpperCase();
     const rows = (msData && msData.rows) ? msData.rows : [];
-    let total = 0, models = 0, body = '';
+    let total = 0, shownModels = 0, shownTotal = 0, body = '';
     for (const m of rows) {
         const colors = (m.colors || []).filter(c => ((c.byStore && c.byStore[storeName]) || 0) > 0);
         if (!colors.length) continue;
-        models++;
+        // Полный итог склада (для счётчика) — по всем позициям, без учёта поиска
+        for (const c of colors) total += (c.byStore && c.byStore[storeName]) || 0;
+        // Фильтр поиска: по модели / цвету / артикулу
+        const modelHit = String(m.model || '').toUpperCase().includes(q);
+        const shownColors = q ? colors.filter(c =>
+            modelHit ||
+            String(c.color || '').toUpperCase().includes(q) ||
+            String(c.article || '').toUpperCase().includes(q)) : colors;
+        if (!shownColors.length) continue;
+        shownModels++;
         let mTotal = 0;
         let colorRows = '';
-        for (const c of colors) {
+        for (const c of shownColors) {
             const cQty = (c.byStore && c.byStore[storeName]) || 0;
             mTotal += cQty;
             const sizes = (c.sizes || [])
@@ -976,18 +999,28 @@ function renderWhStock(containerId, storeName) {
                     : `<button class="action-btn add-ms" onclick="addFromMsTo('${jsStr(c.article)}','${escHtml(storeName)}')">➕ Разместить</button>`}</td>
             </tr>`;
         }
-        total += mTotal;
+        shownTotal += mTotal;
         body += `<tr class="ms-model"><td colspan="4"><strong>📦 ${escHtml(m.model)}</strong> — ${mTotal} шт</td></tr>${colorRows}`;
     }
     const info = document.getElementById(containerId.replace('msWh-', 'msInfo-'));
     if (!body) {
-        wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">📦</div><div>Нет остатков на этом складе</div></div>';
-        if (info) info.textContent = (msData && msData.updatedAt) ? 'Нет остатков на этом складе.' : 'МойСклад ещё синхронизируется…';
-        return 0;
+        wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">📦</div><div>${q ? 'Ничего не найдено по «' + escHtml(q) + '»' : 'Нет остатков на этом складе'}</div></div>`;
+        if (info) info.textContent = (msData && msData.updatedAt) ? (q ? 'Ничего не найдено. Всего на складе ' + total + ' шт.' : 'Нет остатков на этом складе.') : 'МойСклад ещё синхронизируется…';
+        return total;
     }
     wrap.innerHTML = `<table><thead><tr><th>Цвет / Артикул</th><th>Размеры</th><th>Кол-во</th><th>Действие</th></tr></thead><tbody>${body}</tbody></table>`;
-    if (info) info.innerHTML = `Моделей: <strong>${models}</strong> · всего <strong>${total}</strong> шт на складе ${escHtml(storeName)}`;
+    if (info) {
+        info.innerHTML = q
+            ? `Найдено моделей: <strong>${shownModels}</strong> · <strong>${shownTotal}</strong> шт · (всего на складе ${total} шт)`
+            : `Моделей: <strong>${shownModels}</strong> · всего <strong>${total}</strong> шт на складе ${escHtml(storeName)}`;
+    }
     return total;
+}
+
+// Поиск по конкретному складу — просто перерисовываем этот склад (данные уже на клиенте)
+function onWhSearchInput(wh) {
+    const store = WH_STORE['msWh-' + wh];
+    if (store) renderWhStock('msWh-' + wh, store);
 }
 
 function renderAllWhStock() {
