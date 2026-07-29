@@ -179,10 +179,12 @@ function groupInfos(infos) {
     const sz = inf.size || '—';
     let s = c.sizes.get(sz);
     if (!s) { s = { size: sz, article: inf.variantArticle || '', stock: 0, byStore: {} }; c.sizes.set(sz, s); }
-    for (const [store, q] of Object.entries(inf.byStore)) {
-      m.stock += q; m.byStore[store] = (m.byStore[store] || 0) + q;
-      c.stock += q; c.byStore[store] = (c.byStore[store] || 0) + q;
-      s.stock += q; s.byStore[store] = (s.byStore[store] || 0) + q;
+    const total = Number(inf.totalStock) || 0;
+    m.stock += total; c.stock += total; s.stock += total;
+    for (const [store, q] of Object.entries(inf.byStore || {})) {
+      m.byStore[store] = (m.byStore[store] || 0) + q;
+      c.byStore[store] = (c.byStore[store] || 0) + q;
+      s.byStore[store] = (s.byStore[store] || 0) + q;
     }
   }
   return [...models.values()].map(m => ({
@@ -380,84 +382,94 @@ async function msSyncAll() {
   const models = new Map();
   const groups = new Map();
 
-  function addStock(inf, storeName, st) {
-    if (st <= 0) return;
+  function rowPrice(it) {
+    const v = it.salePrice != null ? it.salePrice : it.price;
+    return v != null ? v / 100 : null;
+  }
+  function mergeStore(dst, src) { for (const k in src) dst[k] = (dst[k] || 0) + src[k]; }
+
+  // Добавляет позицию: .stock = верный итог (из stock/all), byStore = раскладка (из bystore)
+  function addItem(inf) {
+    const total = Number(inf.totalStock) || 0;
     let g = groups.get(inf.baseU);
     if (!g) { g = { article: inf.base, model: inf.model, color: inf.color, stock: 0, byStore: {}, price: inf.price }; groups.set(inf.baseU, g); }
-    g.stock += st; g.byStore[storeName] = (g.byStore[storeName] || 0) + st;
+    g.stock += total; mergeStore(g.byStore, inf.byStore);
     if (g.price == null && inf.price != null) g.price = inf.price;
 
     const mU = inf.model.toUpperCase();
     let m = models.get(mU);
     if (!m) { m = { model: inf.model, stock: 0, byStore: {}, colors: new Map() }; models.set(mU, m); }
-    m.stock += st; m.byStore[storeName] = (m.byStore[storeName] || 0) + st;
+    m.stock += total; mergeStore(m.byStore, inf.byStore);
     let c = m.colors.get(inf.baseU);
     if (!c) { c = { article: inf.base, color: inf.color, stock: 0, byStore: {}, price: inf.price, sizes: new Map() }; m.colors.set(inf.baseU, c); }
-    c.stock += st; c.byStore[storeName] = (c.byStore[storeName] || 0) + st;
+    c.stock += total; mergeStore(c.byStore, inf.byStore);
     if (c.price == null && inf.price != null) c.price = inf.price;
 
-    // размер -> остаток по складам
     const sz = inf.size || '—';
     let s = c.sizes.get(sz);
     if (!s) { s = { size: sz, article: inf.variantArticle || '', stock: 0, byStore: {} }; c.sizes.set(sz, s); }
-    s.stock += st; s.byStore[storeName] = (s.byStore[storeName] || 0) + st;
+    s.stock += total; mergeStore(s.byStore, inf.byStore);
   }
 
-  // Остатки берём из отчёта «По товарам» (/report/stock/all) отдельно по каждому
-  // складу. Именно он содержит правильные суммы (в т.ч. 216301), в отличие от
-  // /entity/assortment (даёт 0 по товарам с модификациями) и /report/stock/bystore
-  // (теряет часть позиций).
-  const info = new Map(); // ключ БАЗА|размер -> инфо
+  const info = new Map(); // id -> инфо
 
-  function rowPrice(it) {
-    const v = it.salePrice != null ? it.salePrice : it.price;
-    return v != null ? v / 100 : null;
-  }
-
-  for (const store of stores) {
-    let seen = 0;
-    try {
-      const storeHref = store.id ? `${MS_API}/entity/store/${store.id}` : null;
-      let offset = 0;
-      for (let page = 0; page < 300; page++) {
-        let url = `${MS_API}/report/stock/all?limit=1000&offset=${offset}`;
-        if (storeHref) url += `&filter=stockStore=${storeHref}`;
-        const r = await fetch(url, { headers });
-        if (!r.ok) {
-          const body = await r.text().catch(() => '');
-          msDebug.errors.push(`stock/all «${store.name}» HTTP ${r.status} ${body.slice(0, 100)}`);
-          break;
-        }
-        const data = await r.json();
-        const batch = data.rows || [];
-        for (const it of batch) {
-          const base = baseArticle({ code: it.code, name: it.name, article: it.article });
-          if (!base) continue;
-          const size = sizeFromName({ name: it.name });
-          const key = base.toUpperCase() + '|' + size;
-          let inf = info.get(key);
-          if (!inf) {
-            inf = {
-              base, baseU: base.toUpperCase(), model: modelKey(base),
-              color: colorFromName({ name: it.name }) || base,
-              size, variantArticle: it.article || '', price: rowPrice(it), byStore: {}
-            };
-            info.set(key, inf);
-          }
-          if (inf.price == null) inf.price = rowPrice(it);
-          const st = Number(it.stock) || 0;
-          if (st > 0) {
-            inf.byStore[store.name] = (inf.byStore[store.name] || 0) + st;
-            addStock(inf, store.name, st);
-            seen += st;
-          }
-        }
-        offset += batch.length;
-        const size = data.meta && data.meta.size ? data.meta.size : offset;
-        if (batch.length < 1000 || offset >= size) break;
+  // 1) /report/stock/all (без фильтра) — ВЕРНЫЕ суммы + названия (там есть 216301)
+  try {
+    let offset = 0;
+    for (let page = 0; page < 300; page++) {
+      const r = await fetch(`${MS_API}/report/stock/all?limit=1000&offset=${offset}`, { headers });
+      if (!r.ok) { const b = await r.text().catch(() => ''); msDebug.errors.push(`stock/all HTTP ${r.status} ${b.slice(0, 120)}`); break; }
+      const data = await r.json();
+      const batch = data.rows || [];
+      for (const it of batch) {
+        const id = String(it.meta && it.meta.href || '').split('?')[0].split('/').pop();
+        const base = baseArticle({ code: it.code, name: it.name, article: it.article });
+        if (!id || !base) continue;
+        info.set(id, {
+          base, baseU: base.toUpperCase(), model: modelKey(base),
+          color: colorFromName({ name: it.name }) || base,
+          size: sizeFromName({ name: it.name }),
+          variantArticle: it.article || '', price: rowPrice(it),
+          totalStock: Number(it.stock) || 0, byStore: {}
+        });
       }
-      msDebug.perStore.push({ store: store.name, stock: seen });
-    } catch (e) { msDebug.errors.push(`stock/all «${store.name}» ${e.message}`); }
+      offset += batch.length;
+      const size = data.meta && data.meta.size ? data.meta.size : offset;
+      if (batch.length < 1000 || offset >= size) break;
+    }
+  } catch (e) { msDebug.errors.push('stock/all ' + e.message); }
+
+  // 2) /report/stock/bystore — раскладка по складам (join по id того же отчёта)
+  let matched = 0;
+  try {
+    let offset = 0;
+    for (let p = 0; p < 2000; p++) {
+      const r = await fetch(`${MS_API}/report/stock/bystore?limit=1000&offset=${offset}`, { headers });
+      if (!r.ok) { const b = await r.text().catch(() => ''); msDebug.errors.push(`bystore HTTP ${r.status} ${b.slice(0, 120)}`); break; }
+      const data = await r.json();
+      const rows = data.rows || [];
+      for (const row of rows) {
+        const id = String(row.meta && row.meta.href || '').split('?')[0].split('/').pop();
+        const inf = info.get(id);
+        if (!inf) continue;
+        matched++;
+        for (const sb of (row.stockByStore || [])) {
+          const sName = sb.name || '';
+          if (!sName || MS_SKIP_STORES.includes(sName.toLowerCase())) continue;
+          const st = Number(sb.stock) || 0;
+          if (st > 0) inf.byStore[sName] = (inf.byStore[sName] || 0) + st;
+        }
+      }
+      offset += rows.length;
+      const size = data.meta && data.meta.size ? data.meta.size : offset;
+      if (rows.length < 1000 || offset >= size) break;
+    }
+    msDebug.bystoreMatched = matched;
+  } catch (e) { msDebug.errors.push('bystore ' + e.message); }
+
+  // 3) строим модели -> цвета -> размеры (Всего из stock/all, колонки из bystore)
+  for (const inf of info.values()) {
+    if ((Number(inf.totalStock) || 0) > 0) addItem(inf);
   }
 
   msStoreNames = stores.map(s => s.name);
