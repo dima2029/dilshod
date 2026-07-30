@@ -4,7 +4,7 @@ const path = require('path');
 const {
   modelKey, colorFromName, sizeFromName, msPrice,
   parseStoreRenameMap, makeStoreDisplay,
-  serializeMsSnapshot, deserializeMsSnapshot
+  serializeMsSnapshot, deserializeMsSnapshot, isMsCacheStale
 } = require('./lib/moysklad-parse');
 const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks } = require('./lib/warehouse-place');
 
@@ -1081,9 +1081,17 @@ initDB().then(async () => {
   // пока идёт свежая пересинхронизация (она запустится следом, ниже).
   await loadMsCacheFromDB();
 
-  // Синхронизация каталога МойСклад: сразу при старте и далее каждые 20 минут
+  // Синхронизация каталога МойСклад: каждые 20 минут, плюс сразу при старте —
+  // но только если подхваченный кэш уже устарел. Тяжёлая раскладка по складам
+  // занимает несколько минут; если деплоить часто (несколько раз подряд), каждый
+  // рестарт обрывал её на середине, и сайт вечно видел только частичные данные.
+  // Раз кэш свежий — ждём планового обновления, а не запускаем ресинк заново.
   if (msConfigured()) {
-    msSyncAll().catch(e => console.error('ms sync', e.message));
+    if (isMsCacheStale(msCatalog.updatedAt)) {
+      msSyncAll().catch(e => console.error('ms sync', e.message));
+    } else {
+      console.log(`ℹ️ МойСклад: кэш ещё свежий (обновлён ${msCatalog.updatedAt}) — жду планового обновления`);
+    }
     setInterval(() => msSyncAll().catch(e => console.error('ms sync', e.message)), 20 * 60 * 1000);
   } else {
     console.log('ℹ️ Синхронизация МойСклад выключена (нет доступа)');

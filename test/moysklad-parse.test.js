@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const {
   baseArticle, modelKey, colorFromName, sizeFromName, msPrice,
   parseStoreRenameMap, makeStoreDisplay,
-  serializeMsSnapshot, deserializeMsSnapshot
+  serializeMsSnapshot, deserializeMsSnapshot, isMsCacheStale
 } = require('../lib/moysklad-parse');
 
 test('baseArticle отрезает размер/цвет в скобках', () => {
@@ -81,4 +81,24 @@ test('deserializeMsSnapshot безопасен на пустом/частичн�
   assert.equal(restored.models.size, 0);
   assert.equal(restored.groups.size, 0);
   assert.equal(restored.info.size, 0);
+});
+
+test('isMsCacheStale: нет даты обновления — считаем устаревшим (нужен ресинк)', () => {
+  assert.equal(isMsCacheStale(null), true);
+  assert.equal(isMsCacheStale(undefined), true);
+  assert.equal(isMsCacheStale('не дата'), true);
+});
+
+test('isMsCacheStale: свежий кэш (только что обновился) — ресинк не нужен', () => {
+  const now = Date.parse('2026-01-01T00:20:00Z');
+  const updatedAt = '2026-01-01T00:19:00Z'; // минуту назад
+  assert.equal(isMsCacheStale(updatedAt, now), false);
+});
+
+test('isMsCacheStale: кэш старше 20 минут — нужен ресинк', () => {
+  const now = Date.parse('2026-01-01T00:20:00Z');
+  const updatedAt = '2026-01-01T00:00:00Z'; // 20 минут назад — граница
+  assert.equal(isMsCacheStale(updatedAt, now), true);
+  const fresher = '2026-01-01T00:00:01Z'; // 19:59 назад — ещё свежий
+  assert.equal(isMsCacheStale(fresher, now), false);
 });
