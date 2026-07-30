@@ -6,6 +6,7 @@ const {
   parseStoreRenameMap, makeStoreDisplay,
   serializeMsSnapshot, deserializeMsSnapshot
 } = require('./lib/moysklad-parse');
+const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks } = require('./lib/warehouse-place');
 
 // Не даём процессу упасть из-за необработанной ошибки (иначе Railway перезапускает
 // сервер, каталог МойСклад теряется и данные «пропадают» с экрана).
@@ -671,6 +672,49 @@ function isAllowed(chatId) {
 }
 
 const WH_NAMES = { '1': 'Фаровон', '2': 'Овир', '3': 'Ашан', '4': 'Валаматзода' };
+
+// Массовая расстановка по ячейкам склада Овир (только администратор).
+async function handleBulkPlace(chatId, text) {
+  const blocks = parseBulkPlaceBlocks(text);
+  if (!blocks.length) {
+    return tgSend(chatId,
+      'Не понял формат. Пример:\n<code>Ряд 8 Б\n310197-CRL\n310561-BKLD</code>');
+  }
+
+  let placed = 0, created = 0, moved = 0;
+  const skipped = [];
+  for (const b of blocks) {
+    const floor = OVIR_FLOOR_BY_LETTER[b.letter];
+    if (!floor) { skipped.push(`Ряд ${esc(b.row)} ${esc(b.letter)} — неизвестная буква для Овира`); continue; }
+    for (const article of b.articles) {
+      if (!article) continue;
+      const { rows } = await pool.query('SELECT warehouse FROM items WHERE article = $1', [article]);
+      let name = article;
+      const g = msGroups.get(article);
+      if (g) name = `${g.model} ${g.color}`.trim();
+
+      if (rows.length) {
+        if (rows[0].warehouse !== '2') moved++;
+        await pool.query(
+          `UPDATE items SET warehouse = '2', floor = $2, "row" = $3, cell = $4 WHERE article = $1`,
+          [article, floor, b.row, b.letter]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO items (article, name, warehouse, floor, "row", cell) VALUES ($1, $2, '2', $3, $4, $5)`,
+          [article, name, floor, b.row, b.letter]
+        );
+        created++;
+      }
+      placed++;
+    }
+  }
+
+  const lines = [`✅ Расставлено в Овире: <b>${placed}</b> (новых: ${created}, перемещено с других складов: ${moved})`];
+  if (skipped.length) lines.push('', '⚠️ Пропущено:', ...skipped);
+  return tgSend(chatId, lines.join('\n'));
+}
+
 function itemLine(it) {
   const place = [
     it.warehouse ? `склад ${WH_NAMES[it.warehouse] || it.warehouse}` : null,
@@ -831,7 +875,11 @@ const HELP = [
   '/count — количество товаров',
   '/export — выгрузить весь список файлом',
   '/ostatki АРТИКУЛ — остаток в МойСклад',
-  '/stats — статистика по пользователям бота'
+  '/stats — статистика по пользователям бота',
+  '',
+  'Массовая расстановка по складу Овир — пришли сообщение вида:',
+  '<code>Ряд 8 Б\n310197-CRL\n310561-BKLD</code>',
+  '(этаж определится по букве автоматически)'
 ].join('\n');
 
 async function handleCommand(chatId, text) {
@@ -974,6 +1022,11 @@ async function handleUpdate(update) {
     // Управляющие/старые команды — только администратору
     if (!isAllowed(chatId)) return tgSend(chatId, '⛔ Эта команда только для администратора. Нажми /start для меню.');
     return handleCommand(chatId, text);
+  }
+
+  // Массовая расстановка по ячейкам Овира (пересланный список «Ряд N Буква» + артикулы) — только админ
+  if (isAllowed(chatId) && /^ряд[аи]?\.?\s+\d/i.test(text)) {
+    return handleBulkPlace(chatId, text);
   }
 
   // Не выбран магазин — просим выбрать
