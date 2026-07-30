@@ -2,7 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   baseArticle, modelKey, colorFromName, sizeFromName, msPrice,
-  parseStoreRenameMap, makeStoreDisplay
+  parseStoreRenameMap, makeStoreDisplay,
+  serializeMsSnapshot, deserializeMsSnapshot
 } = require('../lib/moysklad-parse');
 
 test('baseArticle отрезает размер/цвет в скобках', () => {
@@ -43,4 +44,41 @@ test('parseStoreRenameMap + storeDisplay переименовывают изве
 test('parseStoreRenameMap с пустой строкой даёт пустую карту', () => {
   assert.deepEqual(parseStoreRenameMap(''), {});
   assert.deepEqual(parseStoreRenameMap(undefined), {});
+});
+
+test('serializeMsSnapshot/deserializeMsSnapshot переживают JSON-круговорот (кэш в Postgres)', () => {
+  const sizes = new Map([['44', { size: '44', article: '216301-CHAR-44', stock: 5, byStore: { 'Овир': 5 } }]]);
+  const colors = new Map([['216301-CHAR', { article: '216301-CHAR', color: 'CHARCOAL', stock: 5, byStore: { 'Овир': 5 }, price: 549.9, sizes }]]);
+  const models = new Map([['216301', { model: '216301', stock: 5, byStore: { 'Овир': 5 }, colors }]]);
+  const groups = new Map([['216301-CHAR', { article: '216301-CHAR', model: '216301', color: 'CHARCOAL', stock: 5, byStore: { 'Овир': 5 }, price: 549.9 }]]);
+  const info = new Map([['abc-123', { base: '216301-CHAR', baseU: '216301-CHAR', model: '216301', color: 'CHARCOAL', size: '44', variantArticle: '216301-CHAR-44', price: 549.9, totalStock: 5, byStore: { 'Овир': 5 } }]]);
+  const publicData = { updatedAt: 'now', stores: ['Овир'], count: 1, rows: [] };
+
+  const snap = serializeMsSnapshot({ storeNames: ['Овир', 'Фаровон'], publicData, models, groups, info });
+  // Как в Postgres JSONB: снимок проходит через JSON туда и обратно
+  const roundTripped = JSON.parse(JSON.stringify(snap));
+  const restored = deserializeMsSnapshot(roundTripped);
+
+  assert.deepEqual(restored.storeNames, ['Овир', 'Фаровон']);
+  assert.deepEqual(restored.publicData, publicData);
+  assert.equal(restored.models.size, 1);
+  assert.equal(restored.groups.size, 1);
+  assert.equal(restored.info.size, 1);
+
+  const m = restored.models.get('216301');
+  assert.equal(m.stock, 5);
+  assert.ok(m.colors instanceof Map);
+  const c = m.colors.get('216301-CHAR');
+  assert.equal(c.stock, 5);
+  assert.ok(c.sizes instanceof Map);
+  assert.deepEqual(c.sizes.get('44'), { size: '44', article: '216301-CHAR-44', stock: 5, byStore: { 'Овир': 5 } });
+});
+
+test('deserializeMsSnapshot безопасен на пустом/частичном снимке', () => {
+  const restored = deserializeMsSnapshot({});
+  assert.deepEqual(restored.storeNames, []);
+  assert.equal(restored.publicData, null);
+  assert.equal(restored.models.size, 0);
+  assert.equal(restored.groups.size, 0);
+  assert.equal(restored.info.size, 0);
 });

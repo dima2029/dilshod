@@ -3,7 +3,8 @@ const { Pool } = require('pg');
 const path = require('path');
 const {
   modelKey, colorFromName, sizeFromName, msPrice,
-  parseStoreRenameMap, makeStoreDisplay
+  parseStoreRenameMap, makeStoreDisplay,
+  serializeMsSnapshot, deserializeMsSnapshot
 } = require('./lib/moysklad-parse');
 
 // Не даём процессу упасть из-за необработанной ошибки (иначе Railway перезапускает
@@ -70,6 +71,15 @@ async function initDB() {
       ADD COLUMN IF NOT EXISTS first_seen TIMESTAMPTZ DEFAULT now(),
       ADD COLUMN IF NOT EXISTS username TEXT,
       ADD COLUMN IF NOT EXISTS first_name TEXT;
+  `);
+  // Кэш последнего успешного снимка каталога МойСклад — переживает перезапуск
+  // сервера при деплое (см. saveMsCache/loadMsCacheFromDB).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ms_cache (
+      id         INTEGER PRIMARY KEY DEFAULT 1,
+      payload    JSONB NOT NULL,
+      updated_at TIMESTAMPTZ DEFAULT now()
+    );
   `);
   console.log('✅ Postgres подключён, таблицы готовы');
 }
@@ -354,6 +364,40 @@ let msModels = new Map(); // МОДЕЛЬ(upper) -> { model, stock, byStore, col
 let msGroups = new Map(); // базовый артикул 402183L-BBLM (upper) -> цветовая группа
 let msInfoAll = new Map();// assortmentId -> инфо ВСЕХ товаров (в т.ч. с нулём) для поиска
 
+// Каталог МойСклад живёт только в памяти процесса — при каждом деплое Railway
+// перезапускает сервер, и без кэша сайт/бот несколько минут показывают пусто,
+// пока идёт полная пересинхронизация. Сохраняем последний успешный снимок в
+// Postgres и подхватываем его при старте, чтобы не ждать вхолостую.
+async function saveMsCache() {
+  try {
+    const snap = serializeMsSnapshot({
+      storeNames: msStoreNames, publicData: msPublic,
+      models: msModels, groups: msGroups, info: msInfoAll
+    });
+    await pool.query(
+      `INSERT INTO ms_cache (id, payload, updated_at) VALUES (1, $1, now())
+       ON CONFLICT (id) DO UPDATE SET payload = $1, updated_at = now()`,
+      [JSON.stringify(snap)]
+    );
+  } catch (e) { console.error('⚠️ saveMsCache:', e.message); }
+}
+
+async function loadMsCacheFromDB() {
+  try {
+    const { rows } = await pool.query('SELECT payload, updated_at FROM ms_cache WHERE id = 1');
+    if (!rows.length) return false;
+    const restored = deserializeMsSnapshot(rows[0].payload);
+    msStoreNames = restored.storeNames;
+    msPublic = restored.publicData || msPublic;
+    msModels = restored.models;
+    msGroups = restored.groups;
+    msInfoAll = restored.info;
+    msCatalog = { updatedAt: rows[0].updated_at, count: msModels.size };
+    console.log(`♻️  МойСклад: восстановлен кэш из Postgres (${msModels.size} моделей, обновлён ${rows[0].updated_at})`);
+    return true;
+  } catch (e) { console.error('⚠️ loadMsCacheFromDB:', e.message); return false; }
+}
+
 // Склады МойСклад, которые не показывать (по умолчанию показываем все)
 const MS_SKIP_STORES = (process.env.MOYSKLAD_SKIP_STORES || '')
   .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
@@ -481,6 +525,7 @@ async function msSyncAllInner(auth) {
       .filter(m => m.stock > 0)
       .sort((a, b) => b.stock - a.stock);
     msPublic = { updatedAt, stores: msStoreNames, count: rows.length, rows };
+    saveMsCache(); // фоново, не блокирует — переживёт следующий рестарт сервера
   }
 
   // 1) Полный ассортимент (товары + модификации). Остаток лежит на МОДИФИКАЦИЯХ
@@ -972,10 +1017,15 @@ async function startBot() {
 // ======================================================================
 //  Старт
 // ======================================================================
-initDB().then(() => {
+initDB().then(async () => {
   app.listen(PORT, () => console.log(`✅ Сервер запущен на порту ${PORT}`));
   if (TG) startBot();
   else console.log('ℹ️ Telegram-бот выключен (нет TELEGRAM_BOT_TOKEN)');
+
+  // Подхватываем последний сохранённый снимок каталога МойСклад — чтобы после
+  // рестарта (любой деплой) сайт и бот сразу показывали данные, а не пусто,
+  // пока идёт свежая пересинхронизация (она запустится следом, ниже).
+  await loadMsCacheFromDB();
 
   // Синхронизация каталога МойСклад: сразу при старте и далее каждые 20 минут
   if (msConfigured()) {
