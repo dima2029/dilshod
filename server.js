@@ -7,6 +7,7 @@ const {
   serializeMsSnapshot, deserializeMsSnapshot, isMsCacheStale
 } = require('./lib/moysklad-parse');
 const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks, splitCompoundArticle, looksLikeBulkPlace } = require('./lib/warehouse-place');
+const { buildColinsCatalog } = require('./lib/colins-parse');
 
 // Не даём процессу упасть из-за необработанной ошибки (иначе Railway перезапускает
 // сервер, каталог МойСклад теряется и данные «пропадают» с экрана).
@@ -31,6 +32,10 @@ const MS_TOKEN = process.env.MOYSKLAD_TOKEN;
 const MS_LOGIN = process.env.MOYSKLAD_LOGIN;
 const MS_PASSWORD = process.env.MOYSKLAD_PASSWORD;
 const MS_MATCH_FIELD = process.env.MOYSKLAD_MATCH_FIELD || 'article'; // article | code
+
+// Colin's (365trends.tj) — публичный API, токен не нужен
+const COLINS_API_URL = process.env.COLINS_API_URL || 'https://api.365trends.tj/api/products/sidebar-filter';
+const COLINS_BRAND_ID = process.env.COLINS_BRAND_ID || 'colins';
 
 const TG = BOT_TOKEN ? `https://api.telegram.org/bot${BOT_TOKEN}` : null;
 
@@ -77,6 +82,14 @@ async function initDB() {
   // сервера при деплое (см. saveMsCache/loadMsCacheFromDB).
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ms_cache (
+      id         INTEGER PRIMARY KEY DEFAULT 1,
+      payload    JSONB NOT NULL,
+      updated_at TIMESTAMPTZ DEFAULT now()
+    );
+  `);
+  // Кэш каталога Colin's (365trends.tj) — тот же смысл, что и ms_cache.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS colins_cache (
       id         INTEGER PRIMARY KEY DEFAULT 1,
       payload    JSONB NOT NULL,
       updated_at TIMESTAMPTZ DEFAULT now()
@@ -185,6 +198,11 @@ app.get('/api/stock/:article', async (req, res) => {
 app.get('/api/moysklad', (req, res) => {
   // Отдаём заранее собранный каталог (см. rebuild) — без тяжёлой сборки на каждый запрос
   res.json({ updatedAt: msPublic.updatedAt, sync: msSyncState, stores: msPublic.stores, count: msPublic.count, rows: msPublic.rows });
+});
+
+// Каталог Colin's (365trends.tj) — модель -> цвета -> размеры, только остаток > 0.
+app.get('/api/colins', (req, res) => {
+  res.json({ updatedAt: colinsPublic.updatedAt, sync: colinsSyncState, count: colinsPublic.count, rows: colinsPublic.rows });
 });
 
 // Список складов МойСклад — чтобы связать их со складами на сайте
@@ -397,6 +415,86 @@ async function loadMsCacheFromDB() {
     console.log(`♻️  МойСклад: восстановлен кэш из Postgres (${msModels.size} моделей, обновлён ${rows[0].updated_at})`);
     return true;
   } catch (e) { console.error('⚠️ loadMsCacheFromDB:', e.message); return false; }
+}
+
+// ======================================================================
+//  Colin's (365trends.tj) — отдельный каталог остатков/цен, публичный API
+// ======================================================================
+let colinsPublic = { updatedAt: null, count: 0, rows: [] };
+let colinsSyncState = { status: 'idle', startedAt: null, finishedAt: null, lastError: null };
+
+async function colinsFetch(url, opts = {}, timeoutMs = 30000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function colinsSyncAll() {
+  if (colinsSyncState.status === 'running') { console.log('⏳ Colin\'s: синхронизация уже идёт, пропускаю запуск'); return; }
+  colinsSyncState = { status: 'running', startedAt: new Date().toISOString(), finishedAt: null, lastError: null };
+  try {
+    await colinsSyncAllInner();
+    colinsSyncState.status = 'done';
+  } catch (e) {
+    colinsSyncState.status = 'error';
+    colinsSyncState.lastError = e.message;
+    console.error('❌ Colin\'s синхронизация:', e.message);
+  } finally {
+    colinsSyncState.finishedAt = new Date().toISOString();
+  }
+}
+
+async function colinsSyncAllInner() {
+  const headers = { 'Content-Type': 'application/json' };
+  const body = JSON.stringify({ brendIds: [COLINS_BRAND_ID] });
+  const take = 100;
+
+  const firstRes = await colinsFetch(`${COLINS_API_URL}?take=1&skip=0`, { method: 'POST', headers, body });
+  if (!firstRes.ok) throw new Error(`Colin's API HTTP ${firstRes.status}`);
+  const total = Number((await firstRes.json()).total) || 0;
+
+  const raw = [];
+  const maxPages = Math.ceil(total / take) + 5; // страховка от «бесконечной» пагинации
+  for (let p = 0, skip = 0; p < maxPages && skip < total; p++, skip += take) {
+    const r = await colinsFetch(`${COLINS_API_URL}?take=${take}&skip=${skip}`, { method: 'POST', headers, body });
+    if (!r.ok) throw new Error(`Colin's API HTTP ${r.status} (skip=${skip})`);
+    const items = (await r.json()).items || [];
+    if (!items.length) break;
+    raw.push(...items);
+  }
+
+  const rows = buildColinsCatalog(raw);
+  // Не затираем ранее собранный каталог пустышкой, если проход неожиданно вернул пусто.
+  if (!rows.length && colinsPublic.rows.length) {
+    console.warn('⚠️ Colin\'s: новый проход пуст — сохраняю прошлые данные');
+    return;
+  }
+  colinsPublic = { updatedAt: new Date().toISOString(), count: rows.length, rows };
+  saveColinsCache();
+}
+
+async function saveColinsCache() {
+  try {
+    await pool.query(
+      `INSERT INTO colins_cache (id, payload, updated_at) VALUES (1, $1, now())
+       ON CONFLICT (id) DO UPDATE SET payload = $1, updated_at = now()`,
+      [JSON.stringify(colinsPublic)]
+    );
+  } catch (e) { console.error('⚠️ saveColinsCache:', e.message); }
+}
+
+async function loadColinsCacheFromDB() {
+  try {
+    const { rows } = await pool.query('SELECT payload, updated_at FROM colins_cache WHERE id = 1');
+    if (!rows.length) return false;
+    colinsPublic = rows[0].payload || colinsPublic;
+    console.log(`♻️  Colin's: восстановлен кэш из Postgres (${colinsPublic.count} моделей, обновлён ${rows[0].updated_at})`);
+    return true;
+  } catch (e) { console.error('⚠️ loadColinsCacheFromDB:', e.message); return false; }
 }
 
 // Склады МойСклад, которые не показывать (по умолчанию показываем все)
@@ -1161,6 +1259,15 @@ initDB().then(async () => {
   } else {
     console.log('ℹ️ Синхронизация МойСклад выключена (нет доступа)');
   }
+
+  // Colin's (365trends.tj): тот же принцип кэша и «не дёргать ресинк, если свежий».
+  await loadColinsCacheFromDB();
+  if (isMsCacheStale(colinsPublic.updatedAt)) {
+    colinsSyncAll().catch(e => console.error('colins sync', e.message));
+  } else {
+    console.log(`ℹ️ Colin's: кэш ещё свежий (обновлён ${colinsPublic.updatedAt}) — жду планового обновления`);
+  }
+  setInterval(() => colinsSyncAll().catch(e => console.error('colins sync', e.message)), 20 * 60 * 1000);
 }).catch(err => {
   console.error('❌ Ошибка запуска:', err.message);
   process.exit(1);

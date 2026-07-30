@@ -351,6 +351,7 @@
     <button class="tab" onclick="switchTab('valam',this)">🏢 Валаматзода</button>
     <button class="tab" onclick="switchTab('ashan',this)">🏢 Ашан</button>
     <button class="tab" onclick="switchTab('moysklad',this)">📊 Остатки</button>
+    <button class="tab" onclick="switchTab('colins',this)">👖 Colin's</button>
     <button class="tab" onclick="switchTab('settings',this)">⚙️ Настройки</button>
 </div>
 
@@ -564,6 +565,23 @@
             </div>
         </div>
 
+        <!-- COLIN'S -->
+        <div id="colins" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">👖 Colin's — остатки и цены</span>
+                    <div class="card-actions">
+                        <button class="btn-outline" onclick="loadColins(true)">🔄 Обновить</button>
+                    </div>
+                </div>
+                <div class="info-box" id="colinsInfo">Загрузка каталога…</div>
+                <div class="form-group" style="margin-bottom:0.75rem;">
+                    <input type="text" id="colinsSearch" placeholder="🔍 Поиск по модели / цвету / артикулу..." oninput="onColinsSearchInput()">
+                </div>
+                <div class="table-wrap" id="colinsTableWrap"></div>
+            </div>
+        </div>
+
         <!-- НАСТРОЙКИ -->
         <div id="settings" class="tab-content">
             <div class="stats-grid">
@@ -617,6 +635,7 @@
     <div class="wh-sheet-item" onclick="bnSwitchWh('valam')">🏢 Валаматзода <span class="s-count" id="bs-valam">0</span></div>
     <div class="wh-sheet-item" onclick="bnSwitchWh('ashan')">🏢 Skechers Ашан <span class="s-count" id="bs-ashan">0</span></div>
     <div class="wh-sheet-item" onclick="closeWhSheet(); bnSwitch('moysklad','bn-wh')">📊 Остатки МойСклад <span class="s-count" id="bs-ms">0</span></div>
+    <div class="wh-sheet-item" onclick="closeWhSheet(); bnSwitch('colins','bn-wh')">👖 Colin's <span class="s-count" id="bs-colins">0</span></div>
     <button style="width:100%;margin-top:6px;padding:0.75rem;border-radius:10px;border:1px solid var(--border);background:var(--bg);font-size:0.9rem;cursor:pointer;" onclick="closeWhSheet()">Отмена</button>
 </div>
 
@@ -710,6 +729,9 @@ setInterval(loadItems, 3000);
 // Каталог МойСклад: первая загрузка + опрос сервера раз в минуту (сервер сам синхронизируется каждые 20 мин)
 loadMoysklad();
 setInterval(loadMoysklad, 60000);
+// Каталог Colin's — та же схема опроса
+loadColins();
+setInterval(loadColins, 60000);
 
 function switchTab(name, el) {
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
@@ -719,7 +741,7 @@ function switchTab(name, el) {
 }
 
 function switchTabByName(name) {
-    const names = ['search','farovon','ovir','valam','ashan','moysklad','settings'];
+    const names = ['search','farovon','ovir','valam','ashan','moysklad','colins','settings'];
     const idx = names.indexOf(name);
     const tabs = document.querySelectorAll('.tab');
     if (idx >= 0 && tabs[idx]) switchTab(name, tabs[idx]);
@@ -729,7 +751,7 @@ function bnSwitch(name, bnId) {
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.getElementById(name).classList.add('active');
-    const tabNames = ['search','farovon','ovir','valam','ashan','moysklad','settings'];
+    const tabNames = ['search','farovon','ovir','valam','ashan','moysklad','colins','settings'];
     const tabs = document.querySelectorAll('.tab');
     const idx = tabNames.indexOf(name);
     if (idx >= 0 && tabs[idx]) tabs[idx].classList.add('active');
@@ -1041,6 +1063,101 @@ async function addFromMsTo(article, storeName) {
     renderMoysklad();
     alert('✅ Размещено на складе ' + storeName + ': ' + up);
 }
+
+// ===== Colin's (365trends.tj) — отдельный каталог, без физического склада =====
+let colinsData = { updatedAt: null, count: 0, rows: [] };
+let _colinsRenderedKey = null;
+
+async function loadColins() {
+    try {
+        const r = await fetch('/api/colins');
+        colinsData = await r.json();
+    } catch { /* оставляем прежние данные */ }
+    const key = (colinsData.updatedAt || '') + '|' + (colinsData.sync && colinsData.sync.status || '') + '|' + (colinsData.rows ? colinsData.rows.length : 0);
+    const q = (document.getElementById('colinsSearch')?.value || '').trim();
+    if (key === _colinsRenderedKey && !q) return;
+    _colinsRenderedKey = key;
+    renderColins();
+}
+
+function colinsBuildTable(models) {
+    if (!models.length) return '<div class="empty-state"><div class="empty-icon">👖</div><div>Нет товаров</div></div>';
+    let html = '<table><thead><tr><th>Модель / Цвет</th><th>Размеры</th><th>Всего</th><th>Цена</th></tr></thead><tbody>';
+    let ci = 0;
+    for (const m of models.slice(0, 300)) {
+        html += `<tr class="ms-model"><td colspan="2"><strong>👖 ${escHtml(m.model)}</strong></td><td class="stk-cell"><strong>${m.stock}</strong></td><td></td></tr>`;
+        for (const c of (m.colors || [])) {
+            ci++;
+            const priceStr = c.price != null
+                ? (c.oldPrice != null ? `<s style="color:#aaa">${c.oldPrice}</s> <strong>${c.price}</strong>` : `${c.price}`)
+                : '—';
+            html += `<tr class="ms-color" onclick="toggleColinsSizes(${ci})" style="cursor:pointer"><td class="ms-color-name"><span class="ms-caret" id="colins-ct-${ci}">▸</span> ${escHtml(c.color)} <span style="color:#aaa">${escHtml(c.article)}</span></td><td></td><td class="stk-cell"><span class="stk-n">${c.stock}</span></td><td>${priceStr}</td></tr>`;
+            for (const s of (c.sizes || [])) {
+                html += `<tr class="ms-size colins-sz${ci}" style="display:none"><td class="ms-size-name" colspan="2">размер ${escHtml(s.size)}</td><td class="stk-cell">${s.stock}</td><td></td></tr>`;
+            }
+        }
+    }
+    html += '</tbody></table>';
+    if (models.length > 300) html += `<div style="text-align:center;color:#888;padding:.5rem">…показаны первые 300. Уточните поиск.</div>`;
+    return html;
+}
+
+function toggleColinsSizes(ci) {
+    const rows = document.querySelectorAll('.colins-sz' + ci);
+    const caret = document.getElementById('colins-ct-' + ci);
+    let opened = false;
+    rows.forEach(r => {
+        const hidden = r.style.display === 'none';
+        r.style.display = hidden ? '' : 'none';
+        opened = hidden;
+    });
+    if (caret) caret.textContent = opened ? '▾' : '▸';
+}
+
+function renderColins() {
+    const info = document.getElementById('colinsInfo');
+    const wrap = document.getElementById('colinsTableWrap');
+    if (!wrap) return;
+    const allModels = (colinsData && colinsData.rows) ? colinsData.rows : [];
+    const bsColins = document.getElementById('bs-colins');
+    if (bsColins) bsColins.textContent = allModels.length;
+
+    if (info) {
+        if (!allModels.length) {
+            const sync = colinsData.sync || {};
+            if (sync.status === 'error') {
+                info.textContent = '⚠️ Ошибка синхронизации Colin\'s: ' + (sync.lastError || 'неизвестно');
+            } else if (sync.status === 'running' || (!colinsData.updatedAt && sync.status !== 'error')) {
+                info.textContent = 'Colin\'s ещё синхронизируется… (это занимает 1–2 минуты)';
+            } else {
+                info.textContent = 'Сейчас нет товаров с остатком.';
+            }
+        } else {
+            const upd = colinsData.updatedAt
+                ? new Date(colinsData.updatedAt).toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})
+                : '—';
+            const pieces = allModels.reduce((s, m) => s + (Number(m.stock) || 0), 0);
+            info.innerHTML = `Моделей: <strong>${allModels.length}</strong> · всего <strong>${pieces}</strong> шт · обновлено в ${upd}`;
+        }
+    }
+
+    const q = (document.getElementById('colinsSearch')?.value || '').trim().toUpperCase();
+    let models = allModels;
+    if (q) {
+        models = allModels
+            .map(m => {
+                const modelHit = m.model.toUpperCase().includes(q);
+                const colors = (m.colors || []).filter(c =>
+                    modelHit || c.color.toUpperCase().includes(q) || String(c.article).toUpperCase().includes(q));
+                if (!colors.length) return null;
+                return { ...m, colors, stock: colors.reduce((s, c) => s + c.stock, 0) };
+            })
+            .filter(Boolean);
+    }
+    wrap.innerHTML = colinsBuildTable(models);
+}
+
+function onColinsSearchInput() { renderColins(); }
 
 function renderAll() { renderFarovon(); renderWh('ovirBody','2',5); renderWh('valamBody','4',5); renderWh('ashanBody','3',5); renderStats(); triggerStockLoads(); }
 
