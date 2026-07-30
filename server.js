@@ -158,31 +158,6 @@ app.post('/api/items/import', async (req, res) => {
   res.json({ success: true, added, skipped: items.length - added });
 });
 
-// Статистика использования Telegram-бота (для сайта): сколько пользователей,
-// из какого магазина, сколько запросов.
-app.get('/api/bot-stats', async (req, res) => {
-  try {
-    const { rows: totalRows } = await pool.query(
-      'SELECT COUNT(*)::int AS users, COALESCE(SUM(request_count),0)::bigint AS requests FROM bot_users'
-    );
-    const { rows: byStore } = await pool.query(
-      `SELECT COALESCE(store, 'Не выбрал магазин') AS store,
-              COUNT(*)::int AS users,
-              COALESCE(SUM(request_count),0)::bigint AS requests
-       FROM bot_users
-       GROUP BY store
-       ORDER BY requests DESC`
-    );
-    res.json({
-      totalUsers: totalRows[0].users,
-      totalRequests: Number(totalRows[0].requests),
-      byStore: byStore.map(r => ({ store: r.store, users: r.users, requests: Number(r.requests) }))
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
 // Остаток по артикулу (для сайта) — группа/размер из каталога, иначе живой запрос
 app.get('/api/stock/:article', async (req, res) => {
   try {

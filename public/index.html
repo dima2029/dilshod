@@ -576,13 +576,6 @@
                 <div class="stat-card"><div class="s-val warn" id="sPend2">0</div><div class="s-lbl">Ожидают</div></div>
             </div>
             <div class="card" style="margin-top:1rem;">
-                <div class="card-header">
-                    <span class="card-title">🤖 Использование Telegram-бота</span>
-                    <div class="card-actions"><button class="btn-outline" onclick="loadBotStats()">🔄 Обновить</button></div>
-                </div>
-                <div id="botStatsWrap"><div class="info-box">Загрузка статистики…</div></div>
-            </div>
-            <div class="card" style="margin-top:1rem;">
                 <div class="card-header"><span class="card-title">📊 Экспорт данных</span></div>
                 <button class="btn btn-success" onclick="exportAll()">📊 Выгрузить все данные в Excel</button>
             </div>
@@ -716,33 +709,6 @@ setInterval(loadItems, 3000);
 // Каталог МойСклад: первая загрузка + опрос сервера раз в минуту (сервер сам синхронизируется каждые 20 мин)
 loadMoysklad();
 setInterval(loadMoysklad, 60000);
-loadBotStats();
-
-async function loadBotStats() {
-    const wrap = document.getElementById('botStatsWrap');
-    if (!wrap) return;
-    try {
-        const r = await fetch('/api/bot-stats');
-        const data = await r.json();
-        if (data.error) throw new Error(data.error);
-        const rows = (data.byStore || []).map(s => `<tr>
-            <td>${escHtml(s.store)}</td>
-            <td class="stk-cell">${s.users}</td>
-            <td class="stk-cell">${s.requests}</td>
-        </tr>`).join('');
-        wrap.innerHTML = `
-            <div class="stats-grid" style="margin-bottom:1rem;">
-                <div class="stat-card accent"><div class="s-val">${data.totalUsers}</div><div class="s-lbl">Пользователей бота</div></div>
-                <div class="stat-card"><div class="s-val">${data.totalRequests}</div><div class="s-lbl">Всего запросов</div></div>
-            </div>
-            <div class="table-wrap">
-                <table><thead><tr><th>Магазин</th><th>Пользователей</th><th>Запросов</th></tr></thead>
-                <tbody>${rows || '<tr><td colspan="3" style="text-align:center;color:var(--text-muted)">Пока никто не пользовался ботом</td></tr>'}</tbody></table>
-            </div>`;
-    } catch (e) {
-        wrap.innerHTML = `<div class="error-box">❌ Не удалось загрузить статистику: ${escHtml(e.message)}</div>`;
-    }
-}
 
 function switchTab(name, el) {
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
