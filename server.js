@@ -872,9 +872,10 @@ async function trackBotActivity(chatId, from) {
   } catch (e) { console.error('trackBotActivity', e.message); }
 }
 
+const COLINS_STORE_NAME = 'Colin\'s';
 function storeList() {
   const names = msStoreNames.length ? msStoreNames.filter(n => n !== 'Всего') : [];
-  return [...names, ALL_STORES];
+  return [...names, COLINS_STORE_NAME, ALL_STORES];
 }
 function storeKeyboard() {
   const rows = storeList().map((n, i) => [{ text: '🏬 ' + n, callback_data: 'store:' + i }]);
@@ -1002,6 +1003,10 @@ async function handleCallback(cq) {
   if (data.startsWith('store:')) {
     const name = storeByIndex(parseInt(data.slice(6), 10));
     await setUserStore(chatId, name);
+    if (name === COLINS_STORE_NAME) {
+      botMode.set(chatId, 'colins');
+      return tgSend(chatId, `✅ Твой магазин: <b>${esc(name)}</b>\n\nТеперь просто набирай артикул или модель — покажу остаток и цену у Colin's.`, { reply_markup: mainMenu() });
+    }
     botMode.set(chatId, 'ms');
     return tgSend(chatId, `✅ Твой магазин: <b>${esc(name)}</b>\n\nТеперь просто набирай артикул — покажу остаток по твоему магазину.`, { reply_markup: mainMenu() });
   }
@@ -1220,8 +1225,9 @@ async function handleUpdate(update) {
     return handleCommand(chatId, text);
   }
 
-  // Массовая расстановка по ячейкам Овира (список «Ряд N Буква» или просто «N Буква» + артикулы) — только админ
-  if (isAllowed(chatId) && looksLikeBulkPlace(text)) {
+  // Массовая расстановка по ячейкам Овира (список «Ряд N Буква» или просто «N Буква» + артикулы) —
+  // доступно всем сотрудникам, не только админу, чтобы распределять товар мог любой участник.
+  if (looksLikeBulkPlace(text)) {
     return handleBulkPlace(chatId, text);
   }
 
