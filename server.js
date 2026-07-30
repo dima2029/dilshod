@@ -887,10 +887,11 @@ function storeByIndex(i) {
   return list[i] != null ? list[i] : ALL_STORES;
 }
 function mainMenu() {
+  // Colin's отдельной кнопкой не показываем — он есть в списке «Сменить магазин»,
+  // как ещё один склад (наравне с Овир/Ашан/Валаматзода).
   const rows = [
     [{ text: '🔎 Найти остаток (МойСклад)', callback_data: 'menu:ms' }],
     [{ text: '🌍 Остаток по всем складам', callback_data: 'menu:ms-all' }],
-    [{ text: '👖 Colin\'s — остаток и цена', callback_data: 'menu:colins' }],
     [{ text: '📦 Найти на складе (где лежит)', callback_data: 'menu:local' }],
     [{ text: '🏬 Сменить магазин', callback_data: 'menu:store' }]
   ];
@@ -1017,10 +1018,6 @@ async function handleCallback(cq) {
   if (data === 'menu:ms-all') {
     botMode.set(chatId, 'ms-all');
     return tgSend(chatId, '🌍 Набирай артикул или модель — покажу остаток сразу по всем складам.');
-  }
-  if (data === 'menu:colins') {
-    botMode.set(chatId, 'colins');
-    return tgSend(chatId, '👖 Набирай артикул или модель — покажу остаток и цену у Colin\'s.');
   }
   if (data === 'menu:local') {
     botMode.set(chatId, 'local');
