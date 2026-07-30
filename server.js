@@ -681,10 +681,6 @@ async function handleBulkPlace(chatId, text) {
       'Не понял формат. Пример:\n<code>Ряд 8 Б\n310197-CRL\n310561-BKLD</code>');
   }
 
-  // Полный каталог (включая товары с нулевым остатком) — надёжнее msGroups для проверки
-  // существования артикула: msGroups отфильтрован по остатку > 0.
-  const catalogBaseSet = new Set([...msInfoAll.values()].map(i => i.baseU));
-
   let placed = 0, created = 0, moved = 0, split = 0;
   const skipped = [];
   for (const b of blocks) {
@@ -692,9 +688,10 @@ async function handleBulkPlace(chatId, text) {
     if (!floor) { skipped.push(`Ряд ${esc(b.row)} ${esc(b.letter)} — неизвестная буква для Овира`); continue; }
     for (const rawArticle of b.articles) {
       if (!rawArticle) continue;
-      // «405638-BLBK-LGW» может быть двумя разными товарами одной модели, слитыми
-      // через дефис, — проверяем по каталогу МойСклад и при необходимости разбиваем.
-      const parts = splitCompoundArticle(rawArticle, code => catalogBaseSet.has(code));
+      // «405638-BLBK-LGW», «403988-BLU-BLK» и т.п. — это НЕСКОЛЬКО цветов одной модели,
+      // слитых через дефис; разбиваем всегда, без сверки с каталогом МойСклад (там эти
+      // цвета часто не значатся отдельными SKU, хотя на полке это разные товары).
+      const parts = splitCompoundArticle(rawArticle);
       if (parts.length > 1) split++;
       for (const article of parts) {
         const { rows } = await pool.query('SELECT warehouse FROM items WHERE article = $1', [article]);

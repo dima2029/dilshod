@@ -70,27 +70,19 @@ test('parseBulkPlaceBlocks пропускает строки-комментар�
   assert.ok(ignored > 0, 'комментарии должны попасть в счётчик пропущенных, а не в артикулы');
 });
 
-test('splitCompoundArticle: целый код найден в каталоге — не трогаем (составной цвет, не два товара)', () => {
-  const catalog = new Set(['303571-GYMT-BKMT']);
-  assert.deepEqual(splitCompoundArticle('303571-GYMT-BKMT', c => catalog.has(c)), ['303571-GYMT-BKMT']);
+test('splitCompoundArticle: 2 цвета через дефис — всегда разбиваем на 2 товара', () => {
+  assert.deepEqual(splitCompoundArticle('405638-BLBK-LGW'), ['405638-BLBK', '405638-LGW']);
+  assert.deepEqual(splitCompoundArticle('403988-BLU-BLK'), ['403988-BLU', '403988-BLK']);
 });
 
-test('splitCompoundArticle: целый код не найден, но части найдены — разбиваем на отдельные товары', () => {
-  const catalog = new Set(['405638-BLBK', '405638-LGW']);
-  assert.deepEqual(splitCompoundArticle('405638-BLBK-LGW', c => catalog.has(c)), ['405638-BLBK', '405638-LGW']);
+test('splitCompoundArticle: 4 цвета через дефис — разбиваем на 4 товара', () => {
+  assert.deepEqual(
+    splitCompoundArticle('310197-WHT-BBK-LAV-LTPK'),
+    ['310197-WHT', '310197-BBK', '310197-LAV', '310197-LTPK']
+  );
 });
 
-test('splitCompoundArticle: ни целиком, ни по частям не найден — оставляем как есть (неизвестный товар)', () => {
-  const catalog = new Set();
-  assert.deepEqual(splitCompoundArticle('999999-AAA-BBB', c => catalog.has(c)), ['999999-AAA-BBB']);
-});
-
-test('splitCompoundArticle: найдена только одна часть — не разбиваем (неоднозначно, оставляем как есть)', () => {
-  const catalog = new Set(['405638-BLBK']); // 405638-LGW не найден
-  assert.deepEqual(splitCompoundArticle('405638-BLBK-LGW', c => catalog.has(c)), ['405638-BLBK-LGW']);
-});
-
-test('splitCompoundArticle: без второго дефиса — не разбиваем', () => {
-  const catalog = new Set();
-  assert.deepEqual(splitCompoundArticle('310197-CRL', c => catalog.has(c)), ['310197-CRL']);
+test('splitCompoundArticle: без второго дефиса (обычный артикул) — не разбиваем', () => {
+  assert.deepEqual(splitCompoundArticle('310197-CRL'), ['310197-CRL']);
+  assert.deepEqual(splitCompoundArticle('403865-RYBK'), ['403865-RYBK']);
 });
