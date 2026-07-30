@@ -573,9 +573,12 @@ async function msSyncAllInner(auth) {
 
   let matched = 0;
   try {
+    // Быстрый проход только по позициям с остатком; если параметр не сработал
+    // (ошибка ИЛИ пустой ответ) — надёжный полный проход по всему ассортименту.
     let res = await runByStore('positiveOnly');
-    if (res.firstErr) { // параметр не поддержан — полный проход
-      msDebug.errors.push('positiveOnly не поддержан, полный проход');
+    if (res.firstErr || res.matched === 0) {
+      if (res.firstErr) msDebug.errors.push('positiveOnly: ' + res.firstErr);
+      else msDebug.errors.push('positiveOnly вернул пусто — полный проход');
       res = await runByStore('');
       if (res.firstErr) msDebug.errors.push(res.firstErr);
     }
