@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks, splitCompoundArticle, looksLikeBulkPlace } = require('../lib/warehouse-place');
+const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks, splitCompoundArticle, looksLikeBulkPlace, normalizeDashes } = require('../lib/warehouse-place');
 
 test('OVIR_FLOOR_BY_LETTER: этаж 2 — А Б Д Е З И Л М, этаж 1 — В Г Ё Ж Й К Н О', () => {
   for (const l of ['А', 'Б', 'Д', 'Е', 'З', 'И', 'Л', 'М']) assert.equal(OVIR_FLOOR_BY_LETTER[l], '2');
@@ -105,4 +105,25 @@ test('splitCompoundArticle: 4 цвета через дефис — разбив�
 test('splitCompoundArticle: без второго дефиса (обычный артикул) — не разбиваем', () => {
   assert.deepEqual(splitCompoundArticle('310197-CRL'), ['310197-CRL']);
   assert.deepEqual(splitCompoundArticle('403865-RYBK'), ['403865-RYBK']);
+});
+
+test('normalizeDashes: приводит длинное/короткое тире, минус и слэш к обычному дефису', () => {
+  assert.equal(normalizeDashes('4–Н'), '4-Н');   // en dash (U+2013) — типичная автозамена на iPhone
+  assert.equal(normalizeDashes('4—Н'), '4-Н');   // em dash (U+2014)
+  assert.equal(normalizeDashes('4‑Н'), '4-Н');   // non-breaking hyphen (U+2011)
+  assert.equal(normalizeDashes('4−5'), '4-5');   // minus sign (U+2212)
+  assert.equal(normalizeDashes('205700-DKNV/BBK'), '205700-DKNV-BBK'); // слэш между цветами
+  assert.equal(normalizeDashes('4-Н'), '4-Н');   // обычный дефис не трогаем
+});
+
+test('реальный кейс: заголовок с автозаменённым тире (en dash) + артикул со слэшем (как реально пришло с iPhone)', () => {
+  const text = '4–Н\n205700-dknv/bbk';
+  assert.equal(looksLikeBulkPlace(text), true);
+  const { blocks } = parseBulkPlaceBlocks(text);
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].row, '4');
+  assert.equal(blocks[0].letter, 'Н');
+  assert.deepEqual(blocks[0].articles, ['205700-DKNV-BBK']);
+  // и сам составной артикул разбивается на 2 товара, как обычно
+  assert.deepEqual(splitCompoundArticle(blocks[0].articles[0]), ['205700-DKNV', '205700-BBK']);
 });
