@@ -675,7 +675,7 @@ const WH_NAMES = { '1': 'Фаровон', '2': 'Овир', '3': 'Ашан', '4':
 
 // Массовая расстановка по ячейкам склада Овир (только администратор).
 async function handleBulkPlace(chatId, text) {
-  const blocks = parseBulkPlaceBlocks(text);
+  const { blocks, ignored } = parseBulkPlaceBlocks(text);
   if (!blocks.length) {
     return tgSend(chatId,
       'Не понял формат. Пример:\n<code>Ряд 8 Б\n310197-CRL\n310561-BKLD</code>');
@@ -711,6 +711,7 @@ async function handleBulkPlace(chatId, text) {
   }
 
   const lines = [`✅ Расставлено в Овире: <b>${placed}</b> (новых: ${created}, перемещено с других складов: ${moved})`];
+  if (ignored) lines.push(`ℹ️ Пропущено строк, не похожих на артикул (комментарии и т.п.): ${ignored}`);
   if (skipped.length) lines.push('', '⚠️ Пропущено:', ...skipped);
   return tgSend(chatId, lines.join('\n'));
 }

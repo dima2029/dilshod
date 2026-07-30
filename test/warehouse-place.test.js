@@ -10,11 +10,12 @@ test('OVIR_FLOOR_BY_LETTER: этаж 2 — А Б Д Е З И Л М, этаж 1 �
 
 test('parseBulkPlaceBlocks разбирает один блок «Ряд N Буква» + артикулы', () => {
   const text = 'Ряд 8 Б\n310197-crl\n310561-bkld\n405039-slnv-bkcc';
-  const blocks = parseBulkPlaceBlocks(text);
+  const { blocks, ignored } = parseBulkPlaceBlocks(text);
   assert.equal(blocks.length, 1);
   assert.equal(blocks[0].row, '8');
   assert.equal(blocks[0].letter, 'Б');
   assert.deepEqual(blocks[0].articles, ['310197-CRL', '310561-BKLD', '405039-SLNV-BKCC']);
+  assert.equal(ignored, 0);
 });
 
 test('parseBulkPlaceBlocks разбирает несколько блоков в одном сообщении', () => {
@@ -26,7 +27,7 @@ test('parseBulkPlaceBlocks разбирает несколько блоков в
     '314078-hpmt',
     '403968-bblm'
   ].join('\n');
-  const blocks = parseBulkPlaceBlocks(text);
+  const { blocks } = parseBulkPlaceBlocks(text);
   assert.equal(blocks.length, 2);
   assert.equal(blocks[0].letter, 'Б');
   assert.deepEqual(blocks[0].articles, ['310197-CRL', '310561-BKLD']);
@@ -36,12 +37,35 @@ test('parseBulkPlaceBlocks разбирает несколько блоков в
 
 test('parseBulkPlaceBlocks: несколько артикулов на одной строке через пробел', () => {
   const text = 'Ряд 3 А\n310197-CRL 310561-BKLD';
-  const blocks = parseBulkPlaceBlocks(text);
+  const { blocks } = parseBulkPlaceBlocks(text);
   assert.equal(blocks.length, 1);
   assert.deepEqual(blocks[0].articles, ['310197-CRL', '310561-BKLD']);
 });
 
 test('parseBulkPlaceBlocks возвращает пусто для текста без заголовка «Ряд»', () => {
-  assert.deepEqual(parseBulkPlaceBlocks('310197-CRL\n310561-BKLD'), []);
-  assert.deepEqual(parseBulkPlaceBlocks(''), []);
+  assert.deepEqual(parseBulkPlaceBlocks('310197-CRL\n310561-BKLD').blocks, []);
+  assert.deepEqual(parseBulkPlaceBlocks('').blocks, []);
+});
+
+test('parseBulkPlaceBlocks пропускает строки-комментарии вперемешку с артикулами (реальный кейс)', () => {
+  const text = [
+    'Ряди 9 м',
+    '406334-gybl',
+    '303932n-ltpk',
+    '«303571-gymt-bkmt»',
+    '404800-blk',
+    '303644-lglv',
+    '400590n-bblm',
+    'эли 2 свет то значит 2 свет в этом якейке бивает',
+    '9 м это и ест ряд или',
+    '9-м чтото такое'
+  ].join('\n');
+  const { blocks, ignored } = parseBulkPlaceBlocks(text);
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].row, '9');
+  assert.equal(blocks[0].letter, 'М');
+  assert.deepEqual(blocks[0].articles, [
+    '406334-GYBL', '303932N-LTPK', '303571-GYMT-BKMT', '404800-BLK', '303644-LGLV', '400590N-BBLM'
+  ]);
+  assert.ok(ignored > 0, 'комментарии должны попасть в счётчик пропущенных, а не в артикулы');
 });
