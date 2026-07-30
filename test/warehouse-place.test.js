@@ -1,6 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks, splitCompoundArticle, looksLikeBulkPlace, normalizeDashes } = require('../lib/warehouse-place');
+const {
+  OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks, splitCompoundArticle, looksLikeBulkPlace,
+  normalizeDashes, normalizeConfusableLetter
+} = require('../lib/warehouse-place');
 
 test('OVIR_FLOOR_BY_LETTER: этаж 2 — А Б Д Е З И Л М, этаж 1 — В Г Ё Ж Й К Н О', () => {
   for (const l of ['А', 'Б', 'Д', 'Е', 'З', 'И', 'Л', 'М']) assert.equal(OVIR_FLOOR_BY_LETTER[l], '2');
@@ -126,4 +129,37 @@ test('реальный кейс: заголовок с автозаменённ�
   assert.deepEqual(blocks[0].articles, ['205700-DKNV-BBK']);
   // и сам составной артикул разбивается на 2 товара, как обычно
   assert.deepEqual(splitCompoundArticle(blocks[0].articles[0]), ['205700-DKNV', '205700-BBK']);
+});
+
+test('normalizeConfusableLetter: латинские буквы-двойники приводятся к кириллическим', () => {
+  assert.equal(normalizeConfusableLetter('A'), 'А');
+  assert.equal(normalizeConfusableLetter('B'), 'В');
+  assert.equal(normalizeConfusableLetter('E'), 'Е');
+  assert.equal(normalizeConfusableLetter('K'), 'К');
+  assert.equal(normalizeConfusableLetter('M'), 'М');
+  assert.equal(normalizeConfusableLetter('H'), 'Н');
+  assert.equal(normalizeConfusableLetter('O'), 'О');
+  assert.equal(normalizeConfusableLetter('b'), 'В'); // регистр не важен
+  assert.equal(normalizeConfusableLetter('Б'), 'Б'); // уже кириллица — не трогаем
+});
+
+test('реальный кейс: буква заголовка набрана на латинице («3-B» вместо «3-В»)', () => {
+  const text = [
+    '3-B',
+    '232836-bkw',
+    '118277-gry',
+    '220821-wht',
+    '216518-gry',
+    '246084-blbk',
+    '118309-bbk'
+  ].join('\n');
+  assert.equal(looksLikeBulkPlace(text), true);
+  const { blocks } = parseBulkPlaceBlocks(text);
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].row, '3');
+  assert.equal(blocks[0].letter, 'В'); // латинская B стала кириллической В
+  assert.equal(OVIR_FLOOR_BY_LETTER[blocks[0].letter], '1'); // и лукап по схеме склада срабатывает
+  assert.deepEqual(blocks[0].articles, [
+    '232836-BKW', '118277-GRY', '220821-WHT', '216518-GRY', '246084-BLBK', '118309-BBK'
+  ]);
 });
