@@ -62,6 +62,15 @@ async function initDB() {
       updated_at TIMESTAMPTZ DEFAULT now()
     );
   `);
+  // Учёт использования бота: сколько запросов и от кого — добавляем колонки
+  // на существующую таблицу (ALTER ... IF NOT EXISTS безопасен при повторном запуске).
+  await pool.query(`
+    ALTER TABLE bot_users
+      ADD COLUMN IF NOT EXISTS request_count BIGINT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS first_seen TIMESTAMPTZ DEFAULT now(),
+      ADD COLUMN IF NOT EXISTS username TEXT,
+      ADD COLUMN IF NOT EXISTS first_name TEXT;
+  `);
   console.log('✅ Postgres подключён, таблицы готовы');
 }
 
@@ -147,6 +156,31 @@ app.post('/api/items/import', async (req, res) => {
 
   notify(`📥 Импорт: добавлено <b>${added}</b>, пропущено ${items.length - added}`);
   res.json({ success: true, added, skipped: items.length - added });
+});
+
+// Статистика использования Telegram-бота (для сайта): сколько пользователей,
+// из какого магазина, сколько запросов.
+app.get('/api/bot-stats', async (req, res) => {
+  try {
+    const { rows: totalRows } = await pool.query(
+      'SELECT COUNT(*)::int AS users, COALESCE(SUM(request_count),0)::bigint AS requests FROM bot_users'
+    );
+    const { rows: byStore } = await pool.query(
+      `SELECT COALESCE(store, 'Не выбрал магазин') AS store,
+              COUNT(*)::int AS users,
+              COALESCE(SUM(request_count),0)::bigint AS requests
+       FROM bot_users
+       GROUP BY store
+       ORDER BY requests DESC`
+    );
+    res.json({
+      totalUsers: totalRows[0].users,
+      totalRequests: Number(totalRows[0].requests),
+      byStore: byStore.map(r => ({ store: r.store, users: r.users, requests: Number(r.requests) }))
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Остаток по артикулу (для сайта) — группа/размер из каталога, иначе живой запрос
@@ -648,6 +682,25 @@ async function setUserStore(chatId, store) {
   botStoreCache.set(chatId, store);
 }
 
+// Учёт активности: +1 запрос на каждое сообщение/нажатие кнопки от пользователя.
+// Не трогает поле store — им управляет только setUserStore.
+async function trackBotActivity(chatId, from) {
+  const username = (from && from.username) || null;
+  const firstName = (from && from.first_name) || null;
+  try {
+    await pool.query(
+      `INSERT INTO bot_users (chat_id, request_count, first_seen, updated_at, username, first_name)
+       VALUES ($1, 1, now(), now(), $2, $3)
+       ON CONFLICT (chat_id) DO UPDATE SET
+         request_count = bot_users.request_count + 1,
+         updated_at = now(),
+         username = COALESCE($2, bot_users.username),
+         first_name = COALESCE($3, bot_users.first_name)`,
+      [String(chatId), username, firstName]
+    );
+  } catch (e) { console.error('trackBotActivity', e.message); }
+}
+
 function storeList() {
   const names = msStoreNames.length ? msStoreNames.filter(n => n !== 'Всего') : [];
   return [...names, ALL_STORES];
@@ -757,7 +810,8 @@ const HELP = [
   '/del АРТИКУЛ — удалить товар',
   '/count — количество товаров',
   '/export — выгрузить весь список файлом',
-  '/ostatki АРТИКУЛ — остаток в МойСклад'
+  '/ostatki АРТИКУЛ — остаток в МойСклад',
+  '/stats — статистика по пользователям бота'
 ].join('\n');
 
 async function handleCommand(chatId, text) {
@@ -845,15 +899,46 @@ async function handleCommand(chatId, text) {
       }
     }
 
+    case '/stats': {
+      const { rows: totalRows } = await pool.query(
+        'SELECT COUNT(*)::int AS users, COALESCE(SUM(request_count),0)::bigint AS requests FROM bot_users'
+      );
+      const { rows: byStore } = await pool.query(
+        `SELECT COALESCE(store, '— не выбрал магазин') AS store,
+                COUNT(*)::int AS users,
+                COALESCE(SUM(request_count),0)::bigint AS requests
+         FROM bot_users
+         GROUP BY store
+         ORDER BY requests DESC`
+      );
+      const lines = [
+        '📊 <b>Статистика Telegram-бота</b>',
+        '',
+        `Всего пользователей: <b>${totalRows[0].users}</b>`,
+        `Всего запросов: <b>${totalRows[0].requests}</b>`,
+        '',
+        '<b>По складам:</b>'
+      ];
+      for (const r of byStore) {
+        lines.push(`🏬 ${esc(r.store)} — ${r.users} польз. · ${r.requests} запросов`);
+      }
+      return tgSend(chatId, lines.join('\n'));
+    }
+
     default:
       return tgSend(chatId, 'Неизвестная команда. /help — список команд.');
   }
 }
 
 async function handleUpdate(update) {
-  if (update.callback_query) return handleCallback(update.callback_query);
-
+  const cq = update.callback_query;
   const msg = update.message || update.edited_message;
+  const trackChatId = cq ? (cq.message ? cq.message.chat.id : (cq.from && cq.from.id)) : (msg && msg.chat.id);
+  const trackFrom = cq ? cq.from : (msg && msg.from);
+  if (trackChatId) trackBotActivity(trackChatId, trackFrom);
+
+  if (cq) return handleCallback(cq);
+
   if (!msg || !msg.text) return;
   const chatId = msg.chat.id;
   const text = msg.text.trim();
