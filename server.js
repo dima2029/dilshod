@@ -885,10 +885,11 @@ const HELP = [
   '/export — выгрузить весь список файлом',
   '/ostatki АРТИКУЛ — остаток в МойСклад',
   '/stats — статистика по пользователям бота',
+  '/fixcompound — найти и разбить в Овире все слитые через дефис артикулы (405638-BLBK-LGW → 2 товара)',
   '',
   'Массовая расстановка по складу Овир — пришли сообщение вида:',
   '<code>Ряд 8 Б\n310197-CRL\n310561-BKLD</code>',
-  '(этаж определится по букве автоматически)'
+  '(этаж определится по букве автоматически, слово «Ряд» можно не писать)'
 ].join('\n');
 
 async function handleCommand(chatId, text) {
@@ -998,6 +999,40 @@ async function handleCommand(chatId, text) {
       ];
       for (const r of byStore) {
         lines.push(`🏬 ${esc(r.store)} — ${r.users} польз. · ${r.requests} запросов`);
+      }
+      return tgSend(chatId, lines.join('\n'));
+    }
+
+    case '/fixcompound': {
+      // Находит в Овире все уже сохранённые артикулы, слитые через дефис из нескольких
+      // цветов (например «405638-BLBK-LGW»), и разбивает каждый на отдельные товары
+      // на том же месте — без ручного /del + повторной отправки по одному.
+      const { rows } = await pool.query(
+        `SELECT article, warehouse, floor, "row", cell FROM items WHERE warehouse = '2'`
+      );
+      const fixes = [];
+      for (const it of rows) {
+        const parts = splitCompoundArticle(it.article);
+        if (parts.length < 2) continue;
+        await pool.query('DELETE FROM items WHERE article = $1', [it.article]);
+        for (const article of parts) {
+          let name = article;
+          const g = msGroups.get(article);
+          if (g) name = `${g.model} ${g.color}`.trim();
+          await pool.query(
+            `INSERT INTO items (article, name, warehouse, floor, "row", cell) VALUES ($1, $2, '2', $3, $4, $5)
+             ON CONFLICT (article) DO UPDATE SET warehouse = '2', floor = $3, "row" = $4, cell = $5`,
+            [article, name, it.floor, it.row, it.cell]
+          );
+        }
+        fixes.push({ from: it.article, to: parts, floor: it.floor, row: it.row, cell: it.cell });
+      }
+      if (!fixes.length) {
+        return tgSend(chatId, '✅ Составных артикулов, которые нужно разбить, в Овире не найдено — всё чисто.');
+      }
+      const lines = [`🔧 Исправлено составных позиций: <b>${fixes.length}</b>`, ''];
+      for (const f of fixes) {
+        lines.push(`${esc(f.from)} → ${f.to.map(esc).join(', ')} (этаж ${esc(f.floor)}, ряд ${esc(f.row)}, ячейка ${esc(f.cell)})`);
       }
       return tgSend(chatId, lines.join('\n'));
     }
