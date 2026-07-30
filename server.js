@@ -6,7 +6,7 @@ const {
   parseStoreRenameMap, makeStoreDisplay,
   serializeMsSnapshot, deserializeMsSnapshot, isMsCacheStale
 } = require('./lib/moysklad-parse');
-const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks } = require('./lib/warehouse-place');
+const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks, splitCompoundArticle } = require('./lib/warehouse-place');
 
 // Не даём процессу упасть из-за необработанной ошибки (иначе Railway перезапускает
 // сервер, каталог МойСклад теряется и данные «пропадают» с экрана).
@@ -681,36 +681,47 @@ async function handleBulkPlace(chatId, text) {
       'Не понял формат. Пример:\n<code>Ряд 8 Б\n310197-CRL\n310561-BKLD</code>');
   }
 
-  let placed = 0, created = 0, moved = 0;
+  // Полный каталог (включая товары с нулевым остатком) — надёжнее msGroups для проверки
+  // существования артикула: msGroups отфильтрован по остатку > 0.
+  const catalogBaseSet = new Set([...msInfoAll.values()].map(i => i.baseU));
+
+  let placed = 0, created = 0, moved = 0, split = 0;
   const skipped = [];
   for (const b of blocks) {
     const floor = OVIR_FLOOR_BY_LETTER[b.letter];
     if (!floor) { skipped.push(`Ряд ${esc(b.row)} ${esc(b.letter)} — неизвестная буква для Овира`); continue; }
-    for (const article of b.articles) {
-      if (!article) continue;
-      const { rows } = await pool.query('SELECT warehouse FROM items WHERE article = $1', [article]);
-      let name = article;
-      const g = msGroups.get(article);
-      if (g) name = `${g.model} ${g.color}`.trim();
+    for (const rawArticle of b.articles) {
+      if (!rawArticle) continue;
+      // «405638-BLBK-LGW» может быть двумя разными товарами одной модели, слитыми
+      // через дефис, — проверяем по каталогу МойСклад и при необходимости разбиваем.
+      const parts = splitCompoundArticle(rawArticle, code => catalogBaseSet.has(code));
+      if (parts.length > 1) split++;
+      for (const article of parts) {
+        const { rows } = await pool.query('SELECT warehouse FROM items WHERE article = $1', [article]);
+        let name = article;
+        const g = msGroups.get(article);
+        if (g) name = `${g.model} ${g.color}`.trim();
 
-      if (rows.length) {
-        if (rows[0].warehouse !== '2') moved++;
-        await pool.query(
-          `UPDATE items SET warehouse = '2', floor = $2, "row" = $3, cell = $4 WHERE article = $1`,
-          [article, floor, b.row, b.letter]
-        );
-      } else {
-        await pool.query(
-          `INSERT INTO items (article, name, warehouse, floor, "row", cell) VALUES ($1, $2, '2', $3, $4, $5)`,
-          [article, name, floor, b.row, b.letter]
-        );
-        created++;
+        if (rows.length) {
+          if (rows[0].warehouse !== '2') moved++;
+          await pool.query(
+            `UPDATE items SET warehouse = '2', floor = $2, "row" = $3, cell = $4 WHERE article = $1`,
+            [article, floor, b.row, b.letter]
+          );
+        } else {
+          await pool.query(
+            `INSERT INTO items (article, name, warehouse, floor, "row", cell) VALUES ($1, $2, '2', $3, $4, $5)`,
+            [article, name, floor, b.row, b.letter]
+          );
+          created++;
+        }
+        placed++;
       }
-      placed++;
     }
   }
 
   const lines = [`✅ Расставлено в Овире: <b>${placed}</b> (новых: ${created}, перемещено с других складов: ${moved})`];
+  if (split) lines.push(`✂️ Составных артикулов разбито на отдельные товары: ${split}`);
   if (ignored) lines.push(`ℹ️ Пропущено строк, не похожих на артикул (комментарии и т.п.): ${ignored}`);
   if (skipped.length) lines.push('', '⚠️ Пропущено:', ...skipped);
   return tgSend(chatId, lines.join('\n'));

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks } = require('../lib/warehouse-place');
+const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks, splitCompoundArticle } = require('../lib/warehouse-place');
 
 test('OVIR_FLOOR_BY_LETTER: этаж 2 — А Б Д Е З И Л М, этаж 1 — В Г Ё Ж Й К Н О', () => {
   for (const l of ['А', 'Б', 'Д', 'Е', 'З', 'И', 'Л', 'М']) assert.equal(OVIR_FLOOR_BY_LETTER[l], '2');
@@ -68,4 +68,29 @@ test('parseBulkPlaceBlocks пропускает строки-комментар�
     '406334-GYBL', '303932N-LTPK', '303571-GYMT-BKMT', '404800-BLK', '303644-LGLV', '400590N-BBLM'
   ]);
   assert.ok(ignored > 0, 'комментарии должны попасть в счётчик пропущенных, а не в артикулы');
+});
+
+test('splitCompoundArticle: целый код найден в каталоге — не трогаем (составной цвет, не два товара)', () => {
+  const catalog = new Set(['303571-GYMT-BKMT']);
+  assert.deepEqual(splitCompoundArticle('303571-GYMT-BKMT', c => catalog.has(c)), ['303571-GYMT-BKMT']);
+});
+
+test('splitCompoundArticle: целый код не найден, но части найдены — разбиваем на отдельные товары', () => {
+  const catalog = new Set(['405638-BLBK', '405638-LGW']);
+  assert.deepEqual(splitCompoundArticle('405638-BLBK-LGW', c => catalog.has(c)), ['405638-BLBK', '405638-LGW']);
+});
+
+test('splitCompoundArticle: ни целиком, ни по частям не найден — оставляем как есть (неизвестный товар)', () => {
+  const catalog = new Set();
+  assert.deepEqual(splitCompoundArticle('999999-AAA-BBB', c => catalog.has(c)), ['999999-AAA-BBB']);
+});
+
+test('splitCompoundArticle: найдена только одна часть — не разбиваем (неоднозначно, оставляем как есть)', () => {
+  const catalog = new Set(['405638-BLBK']); // 405638-LGW не найден
+  assert.deepEqual(splitCompoundArticle('405638-BLBK-LGW', c => catalog.has(c)), ['405638-BLBK-LGW']);
+});
+
+test('splitCompoundArticle: без второго дефиса — не разбиваем', () => {
+  const catalog = new Set();
+  assert.deepEqual(splitCompoundArticle('310197-CRL', c => catalog.has(c)), ['310197-CRL']);
 });
