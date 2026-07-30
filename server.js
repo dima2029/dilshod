@@ -28,6 +28,11 @@ const MS_MATCH_FIELD = process.env.MOYSKLAD_MATCH_FIELD || 'article'; // article
 
 const TG = BOT_TOKEN ? `https://api.telegram.org/bot${BOT_TOKEN}` : null;
 
+// Публичный адрес сайта — для кнопки «Войти в сайт» в Telegram.
+// Railway сам подставляет RAILWAY_PUBLIC_DOMAIN, если у сервиса есть публичный домен.
+const SITE_URL = process.env.SITE_URL
+  || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null);
+
 const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : false
@@ -681,18 +686,22 @@ function storeList() {
   return [...names, ALL_STORES];
 }
 function storeKeyboard() {
-  return { inline_keyboard: storeList().map((n, i) => [{ text: '🏬 ' + n, callback_data: 'store:' + i }]) };
+  const rows = storeList().map((n, i) => [{ text: '🏬 ' + n, callback_data: 'store:' + i }]);
+  if (SITE_URL) rows.push([{ text: '🌐 Войти в сайт', url: SITE_URL }]);
+  return { inline_keyboard: rows };
 }
 function storeByIndex(i) {
   const list = storeList();
   return list[i] != null ? list[i] : ALL_STORES;
 }
 function mainMenu() {
-  return { inline_keyboard: [
+  const rows = [
     [{ text: '🔎 Найти остаток (МойСклад)', callback_data: 'menu:ms' }],
     [{ text: '📦 Найти на складе (где лежит)', callback_data: 'menu:local' }],
     [{ text: '🏬 Сменить магазин', callback_data: 'menu:store' }]
-  ]};
+  ];
+  if (SITE_URL) rows.push([{ text: '🌐 Войти в сайт', url: SITE_URL }]);
+  return { inline_keyboard: rows };
 }
 
 // Поиск по ВСЕМУ каталогу МойСклад (артикул/код размера/модель/цвет)
