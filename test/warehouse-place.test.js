@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks, splitCompoundArticle } = require('../lib/warehouse-place');
+const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks, splitCompoundArticle, looksLikeBulkPlace } = require('../lib/warehouse-place');
 
 test('OVIR_FLOOR_BY_LETTER: этаж 2 — А Б Д Е З И Л М, этаж 1 — В Г Ё Ж Й К Н О', () => {
   for (const l of ['А', 'Б', 'Д', 'Е', 'З', 'И', 'Л', 'М']) assert.equal(OVIR_FLOOR_BY_LETTER[l], '2');
@@ -45,6 +45,26 @@ test('parseBulkPlaceBlocks: несколько артикулов на одно�
 test('parseBulkPlaceBlocks возвращает пусто для текста без заголовка «Ряд»', () => {
   assert.deepEqual(parseBulkPlaceBlocks('310197-CRL\n310561-BKLD').blocks, []);
   assert.deepEqual(parseBulkPlaceBlocks('').blocks, []);
+});
+
+test('parseBulkPlaceBlocks понимает заголовок и без слова «Ряд» (реальный кейс: «3 ё»)', () => {
+  const text = '3 ё\n210810-khk\n220624-gry\n216522ww-bbk\n211196-char\n216812-nvgy\n118156-dknv';
+  const { blocks } = parseBulkPlaceBlocks(text);
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].row, '3');
+  assert.equal(blocks[0].letter, 'Ё');
+  assert.deepEqual(blocks[0].articles, [
+    '210810-KHK', '220624-GRY', '216522WW-BBK', '211196-CHAR', '216812-NVGY', '118156-DKNV'
+  ]);
+});
+
+test('looksLikeBulkPlace: распознаёт и «Ряд N Буква», и просто «N Буква»', () => {
+  assert.equal(looksLikeBulkPlace('Ряд 8 Б\n310197-CRL'), true);
+  assert.equal(looksLikeBulkPlace('Ряди 9 м\n406334-gybl'), true);
+  assert.equal(looksLikeBulkPlace('3 ё\n210810-khk'), true);
+  assert.equal(looksLikeBulkPlace('310197-CRL'), false);
+  assert.equal(looksLikeBulkPlace('310197'), false);
+  assert.equal(looksLikeBulkPlace(''), false);
 });
 
 test('parseBulkPlaceBlocks пропускает строки-комментарии вперемешку с артикулами (реальный кейс)', () => {

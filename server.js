@@ -6,7 +6,7 @@ const {
   parseStoreRenameMap, makeStoreDisplay,
   serializeMsSnapshot, deserializeMsSnapshot, isMsCacheStale
 } = require('./lib/moysklad-parse');
-const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks, splitCompoundArticle } = require('./lib/warehouse-place');
+const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks, splitCompoundArticle, looksLikeBulkPlace } = require('./lib/warehouse-place');
 
 // Не даём процессу упасть из-за необработанной ошибки (иначе Railway перезапускает
 // сервер, каталог МойСклад теряется и данные «пропадают» с экрана).
@@ -678,7 +678,7 @@ async function handleBulkPlace(chatId, text) {
   const { blocks, ignored } = parseBulkPlaceBlocks(text);
   if (!blocks.length) {
     return tgSend(chatId,
-      'Не понял формат. Пример:\n<code>Ряд 8 Б\n310197-CRL\n310561-BKLD</code>');
+      'Не понял формат. Пример:\n<code>Ряд 8 Б\n310197-CRL\n310561-BKLD</code>\nСлово «Ряд» можно не писать — просто «8 Б» тоже подойдёт, если это первая строка целиком.');
   }
 
   let placed = 0, created = 0, moved = 0, split = 0;
@@ -1033,8 +1033,8 @@ async function handleUpdate(update) {
     return handleCommand(chatId, text);
   }
 
-  // Массовая расстановка по ячейкам Овира (пересланный список «Ряд N Буква» + артикулы) — только админ
-  if (isAllowed(chatId) && /^ряд[аи]?\.?\s+\d/i.test(text)) {
+  // Массовая расстановка по ячейкам Овира (список «Ряд N Буква» или просто «N Буква» + артикулы) — только админ
+  if (isAllowed(chatId) && looksLikeBulkPlace(text)) {
     return handleBulkPlace(chatId, text);
   }
 
