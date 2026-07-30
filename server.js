@@ -790,6 +790,7 @@ function storeByIndex(i) {
 function mainMenu() {
   const rows = [
     [{ text: '🔎 Найти остаток (МойСклад)', callback_data: 'menu:ms' }],
+    [{ text: '🌍 Остаток по всем складам', callback_data: 'menu:ms-all' }],
     [{ text: '📦 Найти на складе (где лежит)', callback_data: 'menu:local' }],
     [{ text: '🏬 Сменить магазин', callback_data: 'menu:store' }]
   ];
@@ -841,6 +842,20 @@ function formatMsResult(query, store) {
   return head + '\n\n' + blocks.join('\n\n');
 }
 
+// Ответ по остаткам — сразу по всем складам, с разбивкой (не только свой магазин)
+function formatMsAllResult(query) {
+  const found = searchMsColors(query);
+  const stores = (msStoreNames || []).filter(n => n !== ALL_STORES);
+  const blocks = [];
+  for (const { c } of found) {
+    const perStore = stores.map(s => `${esc(s)}: <b>${c.byStore[s] || 0}</b>`).join('   ') || '—';
+    blocks.push(`📦 <b>${esc(c.article)}</b> — ${esc(c.color)}\n${perStore}\nИтого: <b>${c.stock}</b>`);
+    if (blocks.length >= 12) break;
+  }
+  if (!blocks.length) return `По «${esc(query)}» ничего не найдено.`;
+  return '🌍 Остатки по всем складам:\n\n' + blocks.join('\n\n');
+}
+
 // Ответ по своей базе — где лежит на складе
 async function formatLocalResult(query) {
   const { rows } = await pool.query(
@@ -864,6 +879,10 @@ async function handleCallback(cq) {
   if (data === 'menu:ms') {
     botMode.set(chatId, 'ms');
     return tgSend(chatId, '🔎 Набирай артикул или модель (можно несколько подряд) — покажу остаток и размеры по твоему магазину.');
+  }
+  if (data === 'menu:ms-all') {
+    botMode.set(chatId, 'ms-all');
+    return tgSend(chatId, '🌍 Набирай артикул или модель — покажу остаток сразу по всем складам.');
   }
   if (data === 'menu:local') {
     botMode.set(chatId, 'local');
@@ -1082,6 +1101,9 @@ async function handleUpdate(update) {
   const mode = botMode.get(chatId) || 'ms';
   if (mode === 'local') {
     return tgSend(chatId, await formatLocalResult(text), { reply_markup: mainMenu() });
+  }
+  if (mode === 'ms-all') {
+    return tgSend(chatId, formatMsAllResult(text), { reply_markup: mainMenu() });
   }
   return tgSend(chatId, formatMsResult(text, store), { reply_markup: mainMenu() });
 }
