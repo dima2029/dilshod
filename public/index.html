@@ -635,7 +635,7 @@
 <!-- MODAL: ЛОКАЦИЯ -->
 <div id="locModal" class="modal">
     <div class="modal-box">
-        <h2>📍 Установить локацию</h2>
+        <h2>📍 Место на складе «<span id="locModalWh"></span>»</h2>
         <div class="form-grid" style="margin-bottom:1rem;">
             <div class="form-group"><label>Этаж *</label><select id="mFloor"><option value="">Выберите</option><option value="1">1️⃣ Первый</option><option value="2">2️⃣ Второй</option></select></div>
             <div class="form-group"><label>Ряд *</label><select id="mRow"><option value="">Выберите</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
@@ -645,6 +645,7 @@
             <button class="m-cancel" onclick="closeModal('locModal')">Отмена</button>
             <button class="m-save" onclick="confirmLoc()">✅ Сохранить</button>
         </div>
+        <button class="btn-outline" style="width:100%;margin-top:0.6rem;" onclick="moveWithoutLoc()">Переместить без места (уточню позже)</button>
     </div>
 </div>
 
@@ -682,7 +683,7 @@
 const DELETE_PASSWORD = '202984'; // отдельная защита только для «Удалить всё»
 
 let items = [];
-let _moveArticle = null, _locArticle = null, _editArticle = null, _locEditArticle = null;
+let _moveArticle = null, _locArticle = null, _editArticle = null, _locEditArticle = null, _moveTargetWh = null;
 let farovonFilter = '';
 
 async function api(method, path, body) {
@@ -1185,10 +1186,21 @@ function exportAll() {
 
 function openMove(article) { _moveArticle = article; openModal('moveModal'); }
 
+const WH_NAMES_JS = { '1':'Фаровон', '2':'Овир', '3':'Ашан', '4':'Валаматзода' };
+
 async function doMove(wh) {
     closeModal('moveModal');
-    if (wh === '1') { _locArticle = _moveArticle; openModal('locModal'); }
-    else { await api('PATCH', `/items/${encodeURIComponent(_moveArticle)}`, { warehouse:wh, floor:null, row:null, cell:null }); await loadItems(); }
+    _locArticle = _moveArticle;
+    _moveTargetWh = wh;
+    // Если товар уже был где-то распределён по секциям — подставляем текущее
+    // место, чтобы можно было просто подправить его, а не вводить заново.
+    const item = items.find(i => i.article === _moveArticle) || {};
+    document.getElementById('mFloor').value = item.floor || '';
+    document.getElementById('mRow').value   = item.row || '';
+    document.getElementById('mCell').value  = item.cell || '';
+    const whTitle = document.getElementById('locModalWh');
+    if (whTitle) whTitle.textContent = WH_NAMES_JS[wh] || '';
+    openModal('locModal');
 }
 
 async function confirmLoc() {
@@ -1197,7 +1209,13 @@ async function confirmLoc() {
     const cell  = document.getElementById('mCell').value;
     if (!floor||!row||!cell) { alert('⚠️ Заполните все поля!'); return; }
     closeModal('locModal');
-    await api('PATCH', `/items/${encodeURIComponent(_locArticle)}`, { warehouse:'1', floor, row, cell });
+    await api('PATCH', `/items/${encodeURIComponent(_locArticle)}`, { warehouse: _moveTargetWh || '1', floor, row, cell });
+    await loadItems();
+}
+
+async function moveWithoutLoc() {
+    closeModal('locModal');
+    await api('PATCH', `/items/${encodeURIComponent(_locArticle)}`, { warehouse: _moveTargetWh || '1', floor: null, row: null, cell: null });
     await loadItems();
 }
 
