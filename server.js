@@ -1,6 +1,10 @@
 const express = require('express');
 const { Pool } = require('pg');
 const path = require('path');
+const {
+  modelKey, colorFromName, sizeFromName, msPrice,
+  parseStoreRenameMap, makeStoreDisplay
+} = require('./lib/moysklad-parse');
 
 // Не даём процессу упасть из-за необработанной ошибки (иначе Railway перезапускает
 // сервер, каталог МойСклад теряется и данные «пропадают» с экрана).
@@ -347,45 +351,8 @@ const MS_SKIP_STORES = (process.env.MOYSKLAD_SKIP_STORES || '')
 
 // Переименование складов МойСклад (если названия отличаются от сайта).
 // Сейчас в МойСклад склады уже названы как на сайте — карта пустая.
-const MS_STORE_RENAME = {};
-(process.env.MOYSKLAD_STORE_MAP || '')
-  .split(',').forEach(pair => {
-    const [from, to] = pair.split('=').map(s => (s || '').trim());
-    if (from && to) MS_STORE_RENAME[from.toLowerCase()] = to;
-  });
-function storeDisplay(name) {
-  return MS_STORE_RENAME[String(name || '').trim().toLowerCase()] || name;
-}
-
-function msPrice(it) {
-  return Array.isArray(it.salePrices) && it.salePrices[0]
-    ? it.salePrices[0].value / 100 : null;
-}
-
-// Базовый артикул: "402183L-BBLM (32, BLUE BLACK LIME)" -> "402183L-BBLM"
-function baseArticle(r) {
-  const src = r.code || r.name || r.article || '';
-  return String(src).split(/\s*\(/)[0].trim();
-}
-
-// Модель из артикула: "402183L-BBLM" -> "402183L"
-function modelKey(base) {
-  return String(base).split('-')[0].trim() || base;
-}
-
-// Цвет из названия: "402183L-BBLM (32, BLUE BLACK LIME)" -> "BLUE BLACK LIME"
-function colorFromName(r) {
-  const m = String(r.name || '').match(/\(([^)]*)\)/);
-  if (!m) return '';
-  const parts = m[1].split(',');
-  return (parts.length > 1 ? parts.slice(1).join(',') : m[1]).trim();
-}
-
-// Размер из названия: "402183L-BBLM (32, BLUE BLACK LIME)" -> "32"
-function sizeFromName(r) {
-  const m = String(r.name || '').match(/\(([^)]*)\)/);
-  return m ? m[1].split(',')[0].trim() : '';
-}
+const MS_STORE_RENAME = parseStoreRenameMap(process.env.MOYSKLAD_STORE_MAP);
+const storeDisplay = makeStoreDisplay(MS_STORE_RENAME);
 
 // Остаток по артикулу: цветовая группа, затем модель, затем живой запрос
 async function getStock(article) {
