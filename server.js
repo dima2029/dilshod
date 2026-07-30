@@ -889,6 +889,7 @@ function mainMenu() {
   const rows = [
     [{ text: '🔎 Найти остаток (МойСклад)', callback_data: 'menu:ms' }],
     [{ text: '🌍 Остаток по всем складам', callback_data: 'menu:ms-all' }],
+    [{ text: '👖 Colin\'s — остаток и цена', callback_data: 'menu:colins' }],
     [{ text: '📦 Найти на складе (где лежит)', callback_data: 'menu:local' }],
     [{ text: '🏬 Сменить магазин', callback_data: 'menu:store' }]
   ];
@@ -954,6 +955,36 @@ function formatMsAllResult(query) {
   return '🌍 Остатки по всем складам:\n\n' + blocks.join('\n\n');
 }
 
+// Поиск по каталогу Colin's (365trends.tj) — модель/цвет/артикул
+function searchColins(query) {
+  const q = query.trim().toUpperCase();
+  if (!q) return [];
+  const res = [];
+  for (const m of (colinsPublic.rows || [])) {
+    const modelHit = String(m.model || '').toUpperCase().includes(q);
+    for (const c of (m.colors || [])) {
+      if (modelHit || String(c.color || '').toUpperCase().includes(q) || String(c.article || '').toUpperCase().includes(q)) {
+        res.push({ model: m.model, c });
+        if (res.length >= 800) return res;
+      }
+    }
+  }
+  return res;
+}
+
+function formatColinsResult(query) {
+  const found = searchColins(query);
+  const blocks = [];
+  for (const { model, c } of found) {
+    const sizeStr = (c.sizes || []).map(s => `${esc(s.size)}=${s.stock}`).join('  ') || '—';
+    const priceStr = c.oldPrice != null ? `${esc(c.oldPrice)} → <b>${esc(c.price)}</b>` : (c.price != null ? `<b>${esc(c.price)}</b>` : '—');
+    blocks.push(`👖 <b>${esc(model)}</b> — ${esc(c.color)} (${esc(c.article)})\nОстаток: <b>${c.stock}</b> шт\nразмеры: ${sizeStr}\nЦена: ${priceStr}`);
+    if (blocks.length >= 12) break;
+  }
+  if (!blocks.length) return `По «${esc(query)}» у Colin's ничего не найдено.`;
+  return '👖 Colin\'s:\n\n' + blocks.join('\n\n');
+}
+
 // Ответ по своей базе — где лежит на складе
 async function formatLocalResult(query) {
   const { rows } = await pool.query(
@@ -981,6 +1012,10 @@ async function handleCallback(cq) {
   if (data === 'menu:ms-all') {
     botMode.set(chatId, 'ms-all');
     return tgSend(chatId, '🌍 Набирай артикул или модель — покажу остаток сразу по всем складам.');
+  }
+  if (data === 'menu:colins') {
+    botMode.set(chatId, 'colins');
+    return tgSend(chatId, '👖 Набирай артикул или модель — покажу остаток и цену у Colin\'s.');
   }
   if (data === 'menu:local') {
     botMode.set(chatId, 'local');
@@ -1202,6 +1237,9 @@ async function handleUpdate(update) {
   }
   if (mode === 'ms-all') {
     return tgSend(chatId, formatMsAllResult(text), { reply_markup: mainMenu() });
+  }
+  if (mode === 'colins') {
+    return tgSend(chatId, formatColinsResult(text), { reply_markup: mainMenu() });
   }
   return tgSend(chatId, formatMsResult(text, store), { reply_markup: mainMenu() });
 }
