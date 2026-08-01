@@ -210,6 +210,14 @@ app.get('/api/moysklad', (req, res) => {
   res.json({ updatedAt: msPublic.updatedAt, sync: msSyncState, stores: msPublic.stores, count: msPublic.count, rows: msPublic.rows });
 });
 
+// Ручной запуск синхронизации Colin's, не дожидаясь плановых 20 минут (например, сразу
+// после деплоя, чтобы проверить результат). colinsSyncAll() сам не даёт запустить
+// вторую синхронизацию, пока идёт текущая, так что повторные вызовы безопасны.
+app.post('/api/colins/resync', (req, res) => {
+  colinsSyncAll().catch(e => console.error('colins resync', e.message));
+  res.json({ started: true, sync: colinsSyncState });
+});
+
 // Каталог Colin's (365trends.tj) — модель -> цвета -> размеры, только остаток > 0.
 app.get('/api/colins', (req, res) => {
   res.json({ updatedAt: colinsPublic.updatedAt, sync: colinsSyncState, count: colinsPublic.count, rows: colinsPublic.rows });
