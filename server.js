@@ -8,6 +8,7 @@ const {
 } = require('./lib/moysklad-parse');
 const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks, splitCompoundArticle, looksLikeBulkPlace } = require('./lib/warehouse-place');
 const { buildColinsCatalog } = require('./lib/colins-parse');
+const { mapDashboardProductToRawItem } = require('./lib/colins-dashboard');
 
 // Не даём процессу упасть из-за необработанной ошибки (иначе Railway перезапускает
 // сервер, каталог МойСклад теряется и данные «пропадают» с экрана).
@@ -33,9 +34,18 @@ const MS_LOGIN = process.env.MOYSKLAD_LOGIN;
 const MS_PASSWORD = process.env.MOYSKLAD_PASSWORD;
 const MS_MATCH_FIELD = process.env.MOYSKLAD_MATCH_FIELD || 'article'; // article | code
 
-// Colin's (365trends.tj) — публичный API, токен не нужен
+// Colin's (365trends.tj) — публичный API (витрина), токен не нужен
 const COLINS_API_URL = process.env.COLINS_API_URL || 'https://api.365trends.tj/api/products/sidebar-filter';
 const COLINS_BRAND_ID = process.env.COLINS_BRAND_ID || 'colins';
+
+// Colin's — полные данные напрямую из админ-панели (Dashboard-Products), а не только
+// то, что опубликовано на витрине. Нужны логин/пароль админки; если их нет — просто
+// продолжаем работать по публичному API, как раньше.
+const COLINS_DASHBOARD_URL = process.env.COLINS_DASHBOARD_URL || 'https://dashboard.365trends.tj';
+const COLINS_DASHBOARD_API_URL = process.env.COLINS_DASHBOARD_API_URL || 'https://api.365trends.tj';
+const COLINS_DASHBOARD_USERNAME = process.env.COLINS_DASHBOARD_USERNAME || '';
+const COLINS_DASHBOARD_PASSWORD = process.env.COLINS_DASHBOARD_PASSWORD || '';
+const COLINS_DASHBOARD_CONCURRENCY = Number(process.env.COLINS_DASHBOARD_CONCURRENCY) || 5;
 
 const TG = BOT_TOKEN ? `https://api.telegram.org/bot${BOT_TOKEN}` : null;
 
@@ -449,6 +459,31 @@ async function colinsSyncAll() {
 }
 
 async function colinsSyncAllInner() {
+  let raw = null;
+  if (COLINS_DASHBOARD_USERNAME && COLINS_DASHBOARD_PASSWORD) {
+    try {
+      raw = await colinsDashboardFetchAll();
+      console.log(`✅ Colin's: полные данные из админ-панели (${raw.length} товаров)`);
+    } catch (e) {
+      console.error('⚠️ Colin\'s: синхронизация из админ-панели не удалась, использую публичный API:', e.message);
+      raw = null;
+    }
+  }
+  if (!raw) raw = await colinsFetchPublicAll();
+
+  const rows = buildColinsCatalog(raw);
+  // Не затираем ранее собранный каталог пустышкой, если проход неожиданно вернул пусто.
+  if (!rows.length && colinsPublic.rows.length) {
+    console.warn('⚠️ Colin\'s: новый проход пуст — сохраняю прошлые данные');
+    return;
+  }
+  colinsPublic = { updatedAt: new Date().toISOString(), count: rows.length, rows };
+  saveColinsCache();
+}
+
+// Публичная витрина (sidebar-filter) — только опубликованные товары. Используется,
+// если админ-доступ не настроен или временно недоступен.
+async function colinsFetchPublicAll() {
   const headers = { 'Content-Type': 'application/json' };
   const body = JSON.stringify({ brendIds: [COLINS_BRAND_ID] });
   const take = 100;
@@ -466,15 +501,106 @@ async function colinsSyncAllInner() {
     if (!items.length) break;
     raw.push(...items);
   }
+  return raw;
+}
 
-  const rows = buildColinsCatalog(raw);
-  // Не затираем ранее собранный каталог пустышкой, если проход неожиданно вернул пусто.
-  if (!rows.length && colinsPublic.rows.length) {
-    console.warn('⚠️ Colin\'s: новый проход пуст — сохраняю прошлые данные');
-    return;
+// ---- Полная выгрузка из закрытой админ-панели (Dashboard-Products) ----
+
+function colinsGetSetCookies(res) {
+  if (typeof res.headers.getSetCookie === 'function') return res.headers.getSetCookie();
+  const raw = res.headers.get('set-cookie');
+  return raw ? [raw] : [];
+}
+
+function colinsPickCookie(cookies, name) {
+  for (const c of cookies) {
+    const m = c.match(new RegExp(`^${name}=[^;]+`));
+    if (m) return m[0];
   }
-  colinsPublic = { updatedAt: new Date().toISOString(), count: rows.length, rows };
-  saveColinsCache();
+  return '';
+}
+
+// Логин в админку 365trends.tj через NextAuth (credentials provider) и получение
+// JWT accessToken, которым дальше подписываются запросы к api.365trends.tj/api/dashboard/*.
+async function colinsDashboardLogin() {
+  const csrfRes = await colinsFetch(`${COLINS_DASHBOARD_URL}/api/auth/csrf`);
+  if (!csrfRes.ok) throw new Error(`csrf HTTP ${csrfRes.status}`);
+  const csrfCookie = colinsPickCookie(colinsGetSetCookies(csrfRes), '__Host-next-auth.csrf-token');
+  const { csrfToken } = await csrfRes.json();
+  if (!csrfToken) throw new Error('не удалось получить csrfToken');
+
+  const params = new URLSearchParams({
+    csrfToken,
+    username: COLINS_DASHBOARD_USERNAME,
+    password: COLINS_DASHBOARD_PASSWORD,
+    callbackUrl: '/',
+    json: 'true'
+  });
+  const loginRes = await colinsFetch(`${COLINS_DASHBOARD_URL}/api/auth/callback/credentials`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: csrfCookie },
+    body: params.toString()
+  });
+  if (!loginRes.ok) throw new Error(`логин HTTP ${loginRes.status}`);
+  const sessionCookie = colinsPickCookie(colinsGetSetCookies(loginRes), '__Secure-next-auth.session-token');
+  if (!sessionCookie) throw new Error('логин не удался — неверные учётные данные?');
+
+  const sessionRes = await colinsFetch(`${COLINS_DASHBOARD_URL}/api/auth/session`, {
+    headers: { Cookie: sessionCookie }
+  });
+  if (!sessionRes.ok) throw new Error(`session HTTP ${sessionRes.status}`);
+  const sessionData = await sessionRes.json();
+  const accessToken = sessionData && sessionData.user && sessionData.user.accessToken;
+  if (!accessToken) throw new Error('не удалось получить accessToken из сессии');
+  return accessToken;
+}
+
+// Выполняет fn для каждого элемента items с не более чем limit одновременными вызовами —
+// чтобы не создавать 5000+ параллельных запросов к чужому серверу разом.
+async function colinsMapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let idx = 0;
+  async function worker() {
+    while (idx < items.length) {
+      const i = idx++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) || 1 }, worker));
+  return results;
+}
+
+async function colinsDashboardFetchAll() {
+  const token = await colinsDashboardLogin();
+  const authHeaders = { Authorization: `Bearer ${token}` };
+  const take = 1000;
+
+  const list = [];
+  for (let skip = 0, total = Infinity; skip < total; skip += take) {
+    const r = await colinsFetch(`${COLINS_DASHBOARD_API_URL}/api/dashboard/products?take=${take}&skip=${skip}`, {
+      method: 'POST',
+      headers: { ...authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ brendIds: [COLINS_BRAND_ID] })
+    }, 30000);
+    if (!r.ok) throw new Error(`dashboard/products HTTP ${r.status} (skip=${skip})`);
+    const data = await r.json();
+    total = Number(data.total) || 0;
+    const items = data.items || [];
+    if (!items.length) break;
+    list.push(...items);
+  }
+
+  const details = await colinsMapWithConcurrency(list, COLINS_DASHBOARD_CONCURRENCY, async (item) => {
+    try {
+      const r = await colinsFetch(`${COLINS_DASHBOARD_API_URL}/api/dashboard/products/${item.id}`, { headers: authHeaders }, 20000);
+      if (!r.ok) return null;
+      return await r.json();
+    } catch (e) {
+      return null;
+    }
+  });
+
+  return details.filter(Boolean).map(mapDashboardProductToRawItem);
 }
 
 async function saveColinsCache() {
