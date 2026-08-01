@@ -220,7 +220,16 @@ app.post('/api/colins/resync', (req, res) => {
 
 // Каталог Colin's (365trends.tj) — модель -> цвета -> размеры, только остаток > 0.
 app.get('/api/colins', (req, res) => {
-  res.json({ updatedAt: colinsPublic.updatedAt, sync: colinsSyncState, count: colinsPublic.count, rows: colinsPublic.rows });
+  res.json({
+    updatedAt: colinsPublic.updatedAt,
+    sync: colinsSyncState,
+    count: colinsPublic.count,
+    rows: colinsPublic.rows,
+    dashboard: {
+      configured: Boolean(COLINS_DASHBOARD_USERNAME && COLINS_DASHBOARD_PASSWORD),
+      lastError: colinsDashboardLastError
+    }
+  });
 });
 
 // Список складов МойСклад — чтобы связать их со складами на сайте
@@ -466,13 +475,20 @@ async function colinsSyncAll() {
   }
 }
 
+// Ошибка последней попытки зайти в админку — отдельно от colinsSyncState.lastError,
+// потому что сама синхронизация в целом при этом всё равно завершается успешно
+// (падаем обратно на публичный API), и общий lastError её не увидит.
+let colinsDashboardLastError = null;
+
 async function colinsSyncAllInner() {
   let raw = null;
   if (COLINS_DASHBOARD_USERNAME && COLINS_DASHBOARD_PASSWORD) {
     try {
       raw = await colinsDashboardFetchAll();
+      colinsDashboardLastError = null;
       console.log(`✅ Colin's: полные данные из админ-панели (${raw.length} товаров)`);
     } catch (e) {
+      colinsDashboardLastError = { message: e.message, at: new Date().toISOString() };
       console.error('⚠️ Colin\'s: синхронизация из админ-панели не удалась, использую публичный API:', e.message);
       raw = null;
     }
