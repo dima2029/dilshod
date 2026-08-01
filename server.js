@@ -1041,9 +1041,18 @@ function storeByIndex(i) {
   const list = storeList();
   return list[i] != null ? list[i] : ALL_STORES;
 }
-function mainMenu() {
-  // Colin's отдельной кнопкой не показываем — он есть в списке «Сменить магазин»,
-  // как ещё один склад (наравне с Овир/Ашан/Валаматзода).
+// store передаём, чтобы показать разное меню для Colin's: у него нет ни складов
+// МойСклад (кнопка «Остаток по всем складам» тут бессмысленна), ни физической
+// раскладки по полкам — только поиск по каталогу Colin's.
+function mainMenu(store) {
+  if (store === COLINS_STORE_NAME) {
+    const rows = [
+      [{ text: '🔎 Найти остаток (Colin\'s)', callback_data: 'menu:colins' }],
+      [{ text: '🏬 Сменить магазин', callback_data: 'menu:store' }]
+    ];
+    if (SITE_URL) rows.push([{ text: '🌐 Войти в сайт', url: SITE_URL }]);
+    return { inline_keyboard: rows };
+  }
   const rows = [
     [{ text: '🔎 Найти остаток (МойСклад)', callback_data: 'menu:ms' }],
     [{ text: '🌍 Остаток по всем складам', callback_data: 'menu:ms-all' }],
@@ -1161,14 +1170,18 @@ async function handleCallback(cq) {
     await setUserStore(chatId, name);
     if (name === COLINS_STORE_NAME) {
       botMode.set(chatId, 'colins');
-      return tgSend(chatId, `✅ Твой магазин: <b>${esc(name)}</b>\n\nТеперь просто набирай артикул или модель — покажу остаток и цену у Colin's.`, { reply_markup: mainMenu() });
+      return tgSend(chatId, `✅ Твой магазин: <b>${esc(name)}</b>\n\nТеперь просто набирай артикул или модель — покажу остаток и цену у Colin's.`, { reply_markup: mainMenu(name) });
     }
     botMode.set(chatId, 'ms');
-    return tgSend(chatId, `✅ Твой магазин: <b>${esc(name)}</b>\n\nТеперь просто набирай артикул — покажу остаток по твоему магазину.`, { reply_markup: mainMenu() });
+    return tgSend(chatId, `✅ Твой магазин: <b>${esc(name)}</b>\n\nТеперь просто набирай артикул — покажу остаток по твоему магазину.`, { reply_markup: mainMenu(name) });
   }
   if (data === 'menu:ms') {
     botMode.set(chatId, 'ms');
     return tgSend(chatId, '🔎 Набирай артикул или модель (можно несколько подряд) — покажу остаток и размеры по твоему магазину.');
+  }
+  if (data === 'menu:colins') {
+    botMode.set(chatId, 'colins');
+    return tgSend(chatId, '👖 Набирай артикул или модель — покажу остаток и цену у Colin\'s.');
   }
   if (data === 'menu:ms-all') {
     botMode.set(chatId, 'ms-all');
@@ -1370,7 +1383,7 @@ async function handleUpdate(update) {
     const cmd = text.split(/\s+/)[0].split('@')[0].toLowerCase();
     if (cmd === '/start' || cmd === '/menu' || cmd === '/help') {
       if (!store) return tgSend(chatId, '👋 Добро пожаловать в склад Skechers!\n\nТы сотрудник какого магазина?', { reply_markup: storeKeyboard() });
-      return tgSend(chatId, `Твой магазин: <b>${esc(store)}</b>\nВыбери действие или просто набери артикул:`, { reply_markup: mainMenu() });
+      return tgSend(chatId, `Твой магазин: <b>${esc(store)}</b>\nВыбери действие или просто набери артикул:`, { reply_markup: mainMenu(store) });
     }
     // Управляющие/старые команды — только администратору
     if (!isAllowed(chatId)) return tgSend(chatId, '⛔ Эта команда только для администратора. Нажми /start для меню.');
@@ -1391,15 +1404,15 @@ async function handleUpdate(update) {
   // Обычный текст = поисковый запрос (режим по умолчанию — остатки МойСклад)
   const mode = botMode.get(chatId) || 'ms';
   if (mode === 'local') {
-    return tgSend(chatId, await formatLocalResult(text), { reply_markup: mainMenu() });
+    return tgSend(chatId, await formatLocalResult(text), { reply_markup: mainMenu(store) });
   }
   if (mode === 'ms-all') {
-    return tgSend(chatId, formatMsAllResult(text), { reply_markup: mainMenu() });
+    return tgSend(chatId, formatMsAllResult(text), { reply_markup: mainMenu(store) });
   }
   if (mode === 'colins') {
-    return tgSend(chatId, formatColinsResult(text), { reply_markup: mainMenu() });
+    return tgSend(chatId, formatColinsResult(text), { reply_markup: mainMenu(store) });
   }
-  return tgSend(chatId, formatMsResult(text, store), { reply_markup: mainMenu() });
+  return tgSend(chatId, formatMsResult(text, store), { reply_markup: mainMenu(store) });
 }
 
 async function startBot() {
