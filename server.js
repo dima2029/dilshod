@@ -512,10 +512,15 @@ function colinsGetSetCookies(res) {
   return raw ? [raw] : [];
 }
 
+// Ищем нужный cookie по имени внутри каждой Set-Cookie строки БЕЗ привязки к началу
+// строки: на Node без Headers.getSetCookie() несколько Set-Cookie из одного ответа
+// (например, session-token и callback-url в ответе логина) склеиваются в одну строку
+// через ", ", и нужный cookie может оказаться не первым.
 function colinsPickCookie(cookies, name) {
+  const re = new RegExp(`(?:^|[,\\s])${name}=[^;]+`);
   for (const c of cookies) {
-    const m = c.match(new RegExp(`^${name}=[^;]+`));
-    if (m) return m[0];
+    const m = c.match(re);
+    if (m) return m[0].replace(/^[,\s]+/, '');
   }
   return '';
 }
