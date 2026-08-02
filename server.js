@@ -105,6 +105,18 @@ async function initDB() {
       updated_at TIMESTAMPTZ DEFAULT now()
     );
   `);
+  // Метка «когда последний раз ПОПЫТАЛИСЬ запустить синхронизацию» (в отличие от
+  // ms_cache/colins_cache, где пишется только УСПЕШНЫЙ результат). Живёт в Postgres,
+  // а не в памяти процесса — при частых деплоях подряд (несколько рестартов за
+  // 10–15 минут) каждый новый процесс иначе не видит, что предыдущий уже начал
+  // тяжёлую пересинхронизацию, и запускает её заново поверх — так 1-2 авг 2026
+  // МойСклад заблокировал доступ за всплеск запросов. См. recentSyncAttempt().
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sync_attempts (
+      name       TEXT PRIMARY KEY,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
   console.log('✅ Postgres подключён, таблицы готовы');
 }
 
@@ -428,6 +440,30 @@ async function saveMsCache() {
   } catch (e) { console.error('⚠️ saveMsCache:', e.message); }
 }
 
+// Не запускать тяжёлую полную пересинхронизацию, если попытка (даже неудачная/
+// прерванная) уже стартовала совсем недавно — защита от всплеска запросов при
+// нескольких деплоях подряд (каждый рестарт иначе честно видел «кэш устарел» и
+// запускал новый проход поверх ещё не завершившегося предыдущего).
+const SYNC_ATTEMPT_COOLDOWN_MS = 10 * 60 * 1000;
+
+async function recordSyncAttempt(name) {
+  try {
+    await pool.query(
+      `INSERT INTO sync_attempts (name, started_at) VALUES ($1, now())
+       ON CONFLICT (name) DO UPDATE SET started_at = now()`,
+      [name]
+    );
+  } catch (e) { console.error('⚠️ recordSyncAttempt:', e.message); }
+}
+
+async function recentSyncAttempt(name, cooldownMs = SYNC_ATTEMPT_COOLDOWN_MS) {
+  try {
+    const { rows } = await pool.query('SELECT started_at FROM sync_attempts WHERE name = $1', [name]);
+    if (!rows.length) return false;
+    return (Date.now() - new Date(rows[0].started_at).getTime()) < cooldownMs;
+  } catch (e) { console.error('⚠️ recentSyncAttempt:', e.message); return false; }
+}
+
 async function loadMsCacheFromDB() {
   try {
     const { rows } = await pool.query('SELECT payload, updated_at FROM ms_cache WHERE id = 1');
@@ -463,6 +499,7 @@ async function colinsFetch(url, opts = {}, timeoutMs = 30000) {
 async function colinsSyncAll() {
   if (colinsSyncState.status === 'running') { console.log('⏳ Colin\'s: синхронизация уже идёт, пропускаю запуск'); return; }
   colinsSyncState = { status: 'running', startedAt: new Date().toISOString(), finishedAt: null, lastError: null };
+  await recordSyncAttempt('colins');
   try {
     await colinsSyncAllInner();
     colinsSyncState.status = 'done';
@@ -704,6 +741,7 @@ async function msSyncAll() {
   if (!auth) { msSyncState = { status: 'error', startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), lastError: 'МойСклад не настроен: нет MOYSKLAD_TOKEN или MOYSKLAD_LOGIN/MOYSKLAD_PASSWORD в Railway' }; return; }
   if (msSyncState.status === 'running') { console.log('⏳ МойСклад: синхронизация уже идёт, пропускаю запуск'); return; }
   msSyncState = { status: 'running', startedAt: new Date().toISOString(), finishedAt: null, lastError: null };
+  await recordSyncAttempt('moysklad');
   try {
     await msSyncAllInner(auth);
     msSyncState.status = 'done';
@@ -1459,7 +1497,9 @@ initDB().then(async () => {
   // рестарт обрывал её на середине, и сайт вечно видел только частичные данные.
   // Раз кэш свежий — ждём планового обновления, а не запускаем ресинк заново.
   if (msConfigured()) {
-    if (isMsCacheStale(msCatalog.updatedAt)) {
+    if (await recentSyncAttempt('moysklad')) {
+      console.log('ℹ️ МойСклад: попытка синхронизации уже была совсем недавно (другой процесс/деплой) — не запускаю сразу, жду планового обновления');
+    } else if (isMsCacheStale(msCatalog.updatedAt)) {
       msSyncAll().catch(e => console.error('ms sync', e.message));
     } else {
       console.log(`ℹ️ МойСклад: кэш ещё свежий (обновлён ${msCatalog.updatedAt}) — жду планового обновления`);
@@ -1469,9 +1509,12 @@ initDB().then(async () => {
     console.log('ℹ️ Синхронизация МойСклад выключена (нет доступа)');
   }
 
-  // Colin's (365trends.tj): тот же принцип кэша и «не дёргать ресинк, если свежий».
+  // Colin's (365trends.tj): тот же принцип кэша и «не дёргать ресинк, если свежий»,
+  // плюс та же защита от повторных попыток при частых деплоях подряд.
   await loadColinsCacheFromDB();
-  if (isMsCacheStale(colinsPublic.updatedAt)) {
+  if (await recentSyncAttempt('colins')) {
+    console.log('ℹ️ Colin\'s: попытка синхронизации уже была совсем недавно (другой процесс/деплой) — не запускаю сразу, жду планового обновления');
+  } else if (isMsCacheStale(colinsPublic.updatedAt)) {
     colinsSyncAll().catch(e => console.error('colins sync', e.message));
   } else {
     console.log(`ℹ️ Colin's: кэш ещё свежий (обновлён ${colinsPublic.updatedAt}) — жду планового обновления`);
