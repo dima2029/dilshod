@@ -69,6 +69,24 @@ test('buildColinsCatalog: товар с остатком 0 по всем раз�
   assert.deepEqual(buildColinsCatalog(items), []);
 });
 
+test('buildColinsCatalog: цвет без остатка ни по одному размеру скрыт, даже если у модели есть другой цвет с остатком', () => {
+  const items = [
+    {
+      article: 'CL1', title: 'Кофта',
+      colors: [{ name: 'BLK', price: '100', salePrice: '100', sizes: [{ value: 'M', quantity: 5 }] }]
+    },
+    {
+      article: 'CL2', title: 'Кофта', // тот же title -> та же модель
+      colors: [{ name: 'WHT', price: '100', salePrice: '100', sizes: [{ value: 'M', quantity: 0 }, { value: 'L', quantity: 0 }] }]
+    }
+  ];
+  const rows = buildColinsCatalog(items);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].stock, 5);
+  assert.equal(rows[0].colors.length, 1);
+  assert.equal(rows[0].colors[0].color, 'BLK');
+});
+
 test('buildColinsCatalog: пустой вход даёт пустой каталог', () => {
   assert.deepEqual(buildColinsCatalog([]), []);
   assert.deepEqual(buildColinsCatalog(undefined), []);

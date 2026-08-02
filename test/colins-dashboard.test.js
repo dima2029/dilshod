@@ -50,10 +50,8 @@ test('mapDashboardProductToRawItem: результат совместим с bui
   assert.equal(catalog.length, 1);
   assert.equal(catalog[0].model, 'Модель A');
   assert.equal(catalog[0].stock, 5);
-  // buildColinsCatalog оставляет оба цвета модели, но обнуляет размеры без остатка
-  assert.equal(catalog[0].colors.length, 2);
+  // buildColinsCatalog скрывает цвет без остатка ни по одному размеру (cl002/WHT)
+  assert.equal(catalog[0].colors.length, 1);
   assert.equal(catalog[0].colors[0].article, 'cl001');
   assert.equal(catalog[0].colors[0].stock, 5);
-  assert.equal(catalog[0].colors[1].article, 'cl002');
-  assert.equal(catalog[0].colors[1].stock, 0);
 });
