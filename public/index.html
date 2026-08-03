@@ -352,6 +352,7 @@
     <button class="tab" onclick="switchTab('ashan',this)">🏢 Ашан</button>
     <button class="tab" onclick="switchTab('moysklad',this)">📊 Остатки</button>
     <button class="tab" onclick="switchTab('colins',this)">👖 Colin's</button>
+    <button class="tab" onclick="switchTab('scan',this)">📷 Скан</button>
     <button class="tab" onclick="switchTab('settings',this)">⚙️ Настройки</button>
 </div>
 
@@ -582,6 +583,47 @@
             </div>
         </div>
 
+        <!-- СКАНИРОВАНИЕ -->
+        <div id="scan" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">📷 Сканирование: ячейка → товары</span>
+                </div>
+                <div class="info-box" id="scanCellInfo">Сначала отсканируйте QR-код ячейки</div>
+
+                <div id="scanReader" style="width:100%;max-width:420px;margin:0 auto;"></div>
+
+                <div class="card-actions" style="margin-top:0.75rem;flex-wrap:wrap;gap:0.5rem;">
+                    <button class="btn-outline green" id="scanStartBtn" onclick="startScan()">▶️ Включить камеру</button>
+                    <button class="btn-outline" id="scanStopBtn" onclick="stopScan()" style="display:none;">⏹ Выключить камеру</button>
+                    <button class="btn-outline" id="scanUndoBtn" onclick="undoLastScan()" disabled>↩️ Отменить последний</button>
+                </div>
+
+                <div id="scanLog" style="margin-top:0.75rem;"></div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">🏷 QR-код для ячейки (для печати и наклейки на полку)</span>
+                </div>
+                <div class="form-group" style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem;">
+                    <select id="qrWarehouse" style="flex:1;min-width:140px;">
+                        <option value="1">🏢 Фаровон</option>
+                        <option value="2">🏢 Овир</option>
+                        <option value="3">🏢 Ашан</option>
+                        <option value="4">🏢 Валаматзода</option>
+                    </select>
+                    <input type="text" id="qrFloor" placeholder="Этаж" style="flex:1;min-width:80px;">
+                    <input type="text" id="qrRow" placeholder="Ряд" style="flex:1;min-width:80px;">
+                    <input type="text" id="qrCell" placeholder="Ячейка (буква)" style="flex:1;min-width:100px;">
+                </div>
+                <div class="card-actions">
+                    <button class="btn-outline green" onclick="generateCellQr()">🏷 Сгенерировать QR</button>
+                </div>
+                <div id="qrPreview" style="margin-top:0.75rem;"></div>
+            </div>
+        </div>
+
         <!-- НАСТРОЙКИ -->
         <div id="settings" class="tab-content">
             <div class="stats-grid">
@@ -618,6 +660,10 @@
         <button class="bn-item" id="bn-wh" onclick="openWhSheet()">
             <div class="bn-icon-wrap"><span class="bn-icon">🏢</span></div>
             <span class="bn-label">Склады</span>
+        </button>
+        <button class="bn-item" id="bn-scan" onclick="bnSwitch('scan','bn-scan')">
+            <div class="bn-icon-wrap"><span class="bn-icon">📷</span></div>
+            <span class="bn-label">Скан</span>
         </button>
         <button class="bn-item" id="bn-settings" onclick="bnSwitch('settings','bn-settings')">
             <div class="bn-icon-wrap"><span class="bn-icon">⚙️</span></div>
@@ -698,6 +744,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="vendor-html5-qrcode.min.js"></script>
 <script>
 const DELETE_PASSWORD = '202984'; // отдельная защита только для «Удалить всё»
 
@@ -741,7 +788,7 @@ function switchTab(name, el) {
 }
 
 function switchTabByName(name) {
-    const names = ['search','farovon','ovir','valam','ashan','moysklad','colins','settings'];
+    const names = ['search','farovon','ovir','valam','ashan','moysklad','colins','scan','settings'];
     const idx = names.indexOf(name);
     const tabs = document.querySelectorAll('.tab');
     if (idx >= 0 && tabs[idx]) switchTab(name, tabs[idx]);
@@ -751,7 +798,7 @@ function bnSwitch(name, bnId) {
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.getElementById(name).classList.add('active');
-    const tabNames = ['search','farovon','ovir','valam','ashan','moysklad','colins','settings'];
+    const tabNames = ['search','farovon','ovir','valam','ashan','moysklad','colins','scan','settings'];
     const tabs = document.querySelectorAll('.tab');
     const idx = tabNames.indexOf(name);
     if (idx >= 0 && tabs[idx]) tabs[idx].classList.add('active');
@@ -1396,6 +1443,144 @@ function printWh(wh) {
 
 function openModal(id)  { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+// ===== Сканирование: ячейка (QR) → товары (штрихкод) =====
+const WH_NAMES_SCAN = {'1':'Фаровон','2':'Овир','3':'Ашан','4':'Валаматзода'};
+let scanReader = null;
+let scanCurrentCell = null;   // {warehouse, floor, row, cell}
+let scanLastResult = null;    // {article, previous} — для отмены
+let scanLastCode = null, scanLastCodeAt = 0; // защита от повторной обработки одного и того же кадра
+
+// Код ячейки — строка вида CELL:склад:этаж:ряд:ячейка (см. lib/cell-qr.js на сервере,
+// здесь та же логика продублирована для браузера — своего сборщика/require в проекте нет).
+function decodeCellCodeClient(code) {
+    const s = String(code || '').trim();
+    if (!s.startsWith('CELL:')) return null;
+    const parts = s.slice(5).split(':');
+    if (parts.length !== 4) return null;
+    const [warehouse, floor, row, cell] = parts;
+    if (!warehouse) return null;
+    return { warehouse, floor: floor === '-' ? null : floor, row: row === '-' ? null : row, cell: cell === '-' ? null : cell };
+}
+
+function renderScanCellInfo() {
+    const el = document.getElementById('scanCellInfo');
+    if (!scanCurrentCell) { el.textContent = 'Сначала отсканируйте QR-код ячейки'; return; }
+    const c = scanCurrentCell;
+    el.innerHTML = `📍 Текущая ячейка: <b>${WH_NAMES_SCAN[c.warehouse] || c.warehouse}</b>` +
+        (c.floor ? `, эт.${c.floor}` : '') + (c.row ? `, ряд ${c.row}` : '') + (c.cell ? `, ${c.cell}` : '');
+}
+
+function scanLogPrepend(html) {
+    const log = document.getElementById('scanLog');
+    const row = document.createElement('div');
+    row.className = 'info-box';
+    row.style.marginBottom = '0.5rem';
+    row.innerHTML = html;
+    log.prepend(row);
+    while (log.children.length > 8) log.removeChild(log.lastChild);
+}
+
+async function onScanDecoded(decodedText) {
+    const now = Date.now();
+    if (decodedText === scanLastCode && (now - scanLastCodeAt) < 2500) return; // тот же кадр — игнор
+    scanLastCode = decodedText;
+    scanLastCodeAt = now;
+
+    const cell = decodeCellCodeClient(decodedText);
+    if (cell) {
+        scanCurrentCell = cell;
+        renderScanCellInfo();
+        if (navigator.vibrate) navigator.vibrate(80);
+        return;
+    }
+
+    // Это не код ячейки — считаем, что это штрихкод товара
+    if (!scanCurrentCell) {
+        scanLogPrepend('⚠️ Сначала отсканируйте QR ячейки, потом товар');
+        return;
+    }
+    const info = await api('GET', '/barcode/' + encodeURIComponent(decodedText));
+    if (!info.found) {
+        scanLogPrepend(`❌ Штрихкод <code>${decodedText}</code> не распознан`);
+        return;
+    }
+    const c = scanCurrentCell;
+    const placeRes = await api('POST', '/items/place', {
+        article: info.article, name: `${info.model} ${info.color}`.trim(),
+        warehouse: c.warehouse, floor: c.floor, row: c.row, cell: c.cell
+    });
+
+    scanLastResult = { article: info.article, previous: placeRes.previous };
+    document.getElementById('scanUndoBtn').disabled = false;
+    if (navigator.vibrate) navigator.vibrate([50,50,50]);
+    scanLogPrepend(`✅ <b>${info.article}</b> — ${info.model} ${info.color} → сохранено в текущую ячейку`);
+    loadItems();
+}
+
+function startScan() {
+    if (typeof Html5Qrcode === 'undefined') {
+        alert('Библиотека сканера не загрузилась. Проверьте интернет-соединение и обновите страницу.');
+        return;
+    }
+    scanReader = new Html5Qrcode('scanReader');
+    scanReader.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: 260 },
+        onScanDecoded,
+        () => {} // ошибки отдельных кадров (не найден код) — игнорируем, это нормально
+    ).then(() => {
+        document.getElementById('scanStartBtn').style.display = 'none';
+        document.getElementById('scanStopBtn').style.display = '';
+    }).catch(err => {
+        alert('Не удалось включить камеру: ' + err);
+    });
+}
+
+function stopScan() {
+    if (!scanReader) return;
+    scanReader.stop().then(() => {
+        scanReader.clear();
+        scanReader = null;
+        document.getElementById('scanStartBtn').style.display = '';
+        document.getElementById('scanStopBtn').style.display = 'none';
+    }).catch(() => {});
+}
+
+async function undoLastScan() {
+    if (!scanLastResult) return;
+    await api('POST', '/items/undo-place', scanLastResult);
+    scanLogPrepend(`↩️ Отменено: <b>${scanLastResult.article}</b>`);
+    scanLastResult = null;
+    document.getElementById('scanUndoBtn').disabled = true;
+    loadItems();
+}
+
+function generateCellQr() {
+    const wh = document.getElementById('qrWarehouse').value;
+    const floor = document.getElementById('qrFloor').value.trim() || '-';
+    const row = document.getElementById('qrRow').value.trim() || '-';
+    const cell = document.getElementById('qrCell').value.trim() || '-';
+    const code = `CELL:${wh}:${floor}:${row}:${cell}`;
+    const label = `${WH_NAMES_SCAN[wh]}${floor!=='-'?', эт.'+floor:''}${row!=='-'?', ряд '+row:''}${cell!=='-'?', '+cell:''}`;
+    const src = '/api/qr.png?text=' + encodeURIComponent(code);
+    document.getElementById('qrPreview').innerHTML = `
+        <div style="text-align:center;border:1px solid var(--border);border-radius:10px;padding:1rem;max-width:280px;margin:0 auto;">
+            <img src="${src}" style="width:220px;height:220px;">
+            <div style="margin-top:0.5rem;font-weight:600;">${label}</div>
+            <button class="btn-outline green" style="margin-top:0.75rem;width:100%;" onclick="printCellQr('${src}', '${label.replace(/'/g,"\\'")}')">🖨️ Печать</button>
+        </div>`;
+}
+
+function printCellQr(src, label) {
+    const w = window.open('', '', 'height=500,width=500');
+    w.document.write(`<html><head><meta charset="UTF-8"><title>QR ячейки</title>
+    <style>body{font-family:Arial;text-align:center;padding:30px}img{width:260px;height:260px}p{font-size:18px;font-weight:bold;margin-top:10px}</style>
+    </head><body><img src="${src}"><p>${label}</p></body></html>`);
+    w.document.close();
+    w.onload = () => w.print();
+    setTimeout(() => w.print(), 400);
+}
 </script>
 </body>
 </html>

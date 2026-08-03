@@ -3,8 +3,32 @@ const assert = require('node:assert/strict');
 const {
   baseArticle, modelKey, colorFromName, sizeFromName, msPrice,
   parseStoreRenameMap, makeStoreDisplay,
-  serializeMsSnapshot, deserializeMsSnapshot, isMsCacheStale
+  serializeMsSnapshot, deserializeMsSnapshot, isMsCacheStale,
+  parseBarcodes, buildBarcodeIndex
 } = require('../lib/moysklad-parse');
+
+test('parseBarcodes: достаёт значения штрихкодов независимо от типа (ean13/code128/...)', () => {
+  assert.deepEqual(
+    parseBarcodes([{ ean13: '4820022500048' }, { code128: 'ABC123' }]),
+    ['4820022500048', 'ABC123']
+  );
+  assert.deepEqual(parseBarcodes([]), []);
+  assert.deepEqual(parseBarcodes(undefined), []);
+  assert.deepEqual(parseBarcodes([{ ean13: '' }, { ean13: '   ' }]), []); // пустые/пробельные отбрасываются
+});
+
+test('buildBarcodeIndex: разные размеры одного артикула/цвета — разные штрихкоды на одну карточку', () => {
+  const infoValues = [
+    { base: '310197-CRL', model: '310197', color: 'CRL', barcodes: ['1111111111111'] },
+    { base: '310197-CRL', model: '310197', color: 'CRL', barcodes: ['2222222222222'] }, // другой размер, тот же цвет
+    { base: '310197-BKLD', model: '310197', color: 'BKLD', barcodes: ['3333333333333'] }
+  ];
+  const index = buildBarcodeIndex(infoValues);
+  assert.deepEqual(index.get('1111111111111'), { article: '310197-CRL', model: '310197', color: 'CRL' });
+  assert.deepEqual(index.get('2222222222222'), { article: '310197-CRL', model: '310197', color: 'CRL' });
+  assert.deepEqual(index.get('3333333333333'), { article: '310197-BKLD', model: '310197', color: 'BKLD' });
+  assert.equal(index.get('нет такого'), undefined);
+});
 
 test('baseArticle отрезает размер/цвет в скобках', () => {
   assert.equal(baseArticle({ name: '402183L-BBLM (32, BLUE BLACK LIME)' }), '402183L-BBLM');

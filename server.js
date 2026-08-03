@@ -1,14 +1,17 @@
 const express = require('express');
 const { Pool } = require('pg');
 const path = require('path');
+const QRCode = require('qrcode');
 const {
   modelKey, colorFromName, sizeFromName, msPrice,
   parseStoreRenameMap, makeStoreDisplay,
-  serializeMsSnapshot, deserializeMsSnapshot, isMsCacheStale
+  serializeMsSnapshot, deserializeMsSnapshot, isMsCacheStale,
+  parseBarcodes, buildBarcodeIndex
 } = require('./lib/moysklad-parse');
 const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks, splitCompoundArticle, looksLikeBulkPlace } = require('./lib/warehouse-place');
 const { buildColinsCatalog } = require('./lib/colins-parse');
 const { mapDashboardProductToRawItem } = require('./lib/colins-dashboard');
+const { encodeCellCode, decodeCellCode, isCellCode } = require('./lib/cell-qr');
 
 // Не даём процессу упасть из-за необработанной ошибки (иначе Railway перезапускает
 // сервер, каталог МойСклад теряется и данные «пропадают» с экрана).
@@ -202,6 +205,68 @@ app.post('/api/items/import', async (req, res) => {
 
   notify(`📥 Импорт: добавлено <b>${added}</b>, пропущено ${items.length - added}`);
   res.json({ success: true, added, skipped: items.length - added });
+});
+
+// Размещение товара со сканера (сначала сканируется QR ячейки, потом штрихкод товара) —
+// в отличие от POST /api/items, не отказывает, если артикул уже есть, а ПЕРЕМЕЩАЕТ его
+// в новую ячейку (в т.ч. на другой склад). Возвращает предыдущее место — для кнопки
+// «Отменить последний скан» на сайте.
+app.post('/api/items/place', async (req, res) => {
+  const { article, name, warehouse, floor, row, cell } = req.body;
+  if (!article) return res.status(400).json({ error: 'Артикул обязателен' });
+  const key = String(article).toUpperCase();
+
+  const prevRes = await pool.query('SELECT * FROM items WHERE article = $1', [key]);
+  const previous = prevRes.rows[0] || null;
+
+  await pool.query(
+    `INSERT INTO items (article, name, warehouse, floor, "row", cell)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (article) DO UPDATE SET
+       name = COALESCE(EXCLUDED.name, items.name),
+       warehouse = EXCLUDED.warehouse, floor = EXCLUDED.floor, "row" = EXCLUDED."row", cell = EXCLUDED.cell`,
+    [key, name || (previous && previous.name) || key, warehouse || '1', floor || null, row || null, cell || null]
+  );
+  notify(`📷 Скан: <b>${esc(key)}</b> → ${esc(WH_NAMES[warehouse] || warehouse)}, эт.${esc(floor || '—')} ряд ${esc(row || '—')} ${esc(cell || '—')}`);
+  res.json({ success: true, previous, wasNew: !previous });
+});
+
+// Отмена последнего скана: либо вернуть товар на предыдущее место, либо удалить,
+// если до этого скана его не существовало вовсе.
+app.post('/api/items/undo-place', async (req, res) => {
+  const { article, previous } = req.body;
+  if (!article) return res.status(400).json({ error: 'Артикул обязателен' });
+  const key = String(article).toUpperCase();
+  if (previous) {
+    await pool.query(
+      `UPDATE items SET name=$2, warehouse=$3, floor=$4, "row"=$5, cell=$6 WHERE article=$1`,
+      [key, previous.name, previous.warehouse, previous.floor, previous.row, previous.cell]
+    );
+  } else {
+    await pool.query('DELETE FROM items WHERE article = $1', [key]);
+  }
+  res.json({ success: true });
+});
+
+// Поиск товара по штрихкоду (для сканера на сайте) — данные из штрихкодов МойСклад,
+// собираются при обычной синхронизации, без отдельных запросов к API.
+app.get('/api/barcode/:code', (req, res) => {
+  const info = msBarcodeMap.get(String(req.params.code).trim());
+  if (!info) return res.status(404).json({ found: false });
+  res.json({ found: true, ...info });
+});
+
+// Картинка QR-кода для печати на ячейку — генерируется на лету, ничего не хранится.
+app.get('/api/qr.png', async (req, res) => {
+  const text = String(req.query.text || '');
+  if (!text) return res.status(400).json({ error: 'Нет text' });
+  try {
+    const buf = await QRCode.toBuffer(text, { type: 'png', width: 260, margin: 1 });
+    res.set('Content-Type', 'image/png');
+    res.send(buf);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Остаток по артикулу (для сайта) — группа/размер из каталога, иначе живой запрос
@@ -421,6 +486,7 @@ let msStoreNames = [];    // порядок складов для колонок
 let msModels = new Map(); // МОДЕЛЬ(upper) -> { model, stock, byStore, colors:Map }
 let msGroups = new Map(); // базовый артикул 402183L-BBLM (upper) -> цветовая группа
 let msInfoAll = new Map();// assortmentId -> инфо ВСЕХ товаров (в т.ч. с нулём) для поиска
+let msBarcodeMap = new Map(); // штрихкод -> { article, model, color } — для сканера на сайте
 
 // Каталог МойСклад живёт только в памяти процесса — при каждом деплое Railway
 // перезапускает сервер, и без кэша сайт/бот несколько минут показывают пусто,
@@ -428,10 +494,13 @@ let msInfoAll = new Map();// assortmentId -> инфо ВСЕХ товаров (�
 // Postgres и подхватываем его при старте, чтобы не ждать вхолостую.
 async function saveMsCache() {
   try {
-    const snap = serializeMsSnapshot({
-      storeNames: msStoreNames, publicData: msPublic,
-      models: msModels, groups: msGroups, info: msInfoAll
-    });
+    const snap = {
+      ...serializeMsSnapshot({
+        storeNames: msStoreNames, publicData: msPublic,
+        models: msModels, groups: msGroups, info: msInfoAll
+      }),
+      barcodes: [...msBarcodeMap.entries()]
+    };
     await pool.query(
       `INSERT INTO ms_cache (id, payload, updated_at) VALUES (1, $1, now())
        ON CONFLICT (id) DO UPDATE SET payload = $1, updated_at = now()`,
@@ -474,6 +543,7 @@ async function loadMsCacheFromDB() {
     msModels = restored.models;
     msGroups = restored.groups;
     msInfoAll = restored.info;
+    msBarcodeMap = new Map(rows[0].payload.barcodes || []);
     msCatalog = { updatedAt: rows[0].updated_at, count: msModels.size };
     console.log(`♻️  МойСклад: восстановлен кэш из Postgres (${msModels.size} моделей, обновлён ${rows[0].updated_at})`);
     return true;
@@ -842,12 +912,14 @@ async function msSyncAllInner(auth) {
           color: colorFromName({ name: it.name }) || base,
           size: sizeFromName({ name: it.name }),
           variantArticle: it.article || it.code || '',
-          price: msPrice(it), totalStock: Number(it.stock) || 0, byStore: {}
+          price: msPrice(it), totalStock: Number(it.stock) || 0, byStore: {},
+          barcodes: parseBarcodes(it.barcodes)
         });
       }
       offset += batch.length;
     }
     msDebug.infoCount = info.size;
+    msBarcodeMap = buildBarcodeIndex(info.values());
   } catch (e) { msDebug.errors.push('assortment ' + e.message); }
 
   // Итоги видны сразу (вкладка «Остатки» с общими остатками), не дожидаясь раскладки по складам
