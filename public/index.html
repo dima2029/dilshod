@@ -1526,7 +1526,16 @@ function startScan() {
     scanReader = new Html5Qrcode('scanReader');
     scanReader.start(
         { facingMode: 'environment' },
-        { fps: 10, qrbox: 260 },
+        {
+            fps: 10,
+            // QR-код квадратный, а штрихкод на коробке — широкий и невысокий; фиксированный
+            // квадрат 260×260 обрезал штрихкод по краям, и он не распознавался. Берём широкий
+            // прямоугольник (90% ширины видео, соотношение сторон 2:1) — под оба формата сразу.
+            qrbox: (viewfinderWidth, viewfinderHeight) => {
+                const w = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.9);
+                return { width: w, height: Math.floor(w * 0.5) };
+            }
+        },
         onScanDecoded,
         () => {} // ошибки отдельных кадров (не найден код) — игнорируем, это нормально
     ).then(() => {
