@@ -36,6 +36,10 @@ const MS_TOKEN = process.env.MOYSKLAD_TOKEN;
 const MS_LOGIN = process.env.MOYSKLAD_LOGIN;
 const MS_PASSWORD = process.env.MOYSKLAD_PASSWORD;
 const MS_MATCH_FIELD = process.env.MOYSKLAD_MATCH_FIELD || 'article'; // article | code
+// Пауза между страницами пагинации при синхронизации — без неё все запросы одного
+// прохода улетают пачкой за секунды, и даже один нормальный цикл синхронизации может
+// кратковременно превысить лимит МойСклад «>400 запросов/мин» (блокировка 1-2 авг 2026).
+const MS_PAGE_DELAY_MS = Number(process.env.MOYSKLAD_PAGE_DELAY_MS) || 150;
 
 // Colin's (365trends.tj) — публичный API (витрина), токен не нужен
 const COLINS_API_URL = process.env.COLINS_API_URL || 'https://api.365trends.tj/api/products/sidebar-filter';
@@ -896,6 +900,7 @@ async function msSyncAllInner(auth) {
   try {
     let offset = 0;
     for (let page = 0; page < 400; page++) {
+      if (page > 0) await sleep(MS_PAGE_DELAY_MS); // не бить по API пачкой без пауз — см. блокировку 1-2 авг 2026
       const r = await msFetch(`${MS_API}/entity/assortment?limit=1000&offset=${offset}`, { headers });
       if (!r.ok) { const b = await r.text().catch(() => ''); msDebug.errors.push(`assortment HTTP ${r.status} ${b.slice(0, 120)}`); break; }
       const data = await r.json();
@@ -934,6 +939,7 @@ async function msSyncAllInner(auth) {
     const maxPages = Math.ceil(info.size / 1000) + 5; // страховка от «бесконечной» пагинации
     const q = mode ? `&stockMode=${mode}` : '';
     for (let p = 0; p < maxPages; p++) {
+      if (p > 0) await sleep(MS_PAGE_DELAY_MS);
       const r = await msFetch(`${MS_API}/report/stock/bystore?limit=1000&offset=${offset}${q}`, { headers });
       if (!r.ok) {
         const b = await r.text().catch(() => '');
@@ -967,6 +973,7 @@ async function msSyncAllInner(auth) {
     // (ошибка ИЛИ пустой ответ) — надёжный полный проход по всему ассортименту.
     let res = await runByStore('positiveOnly');
     if (res.firstErr || res.matched === 0) {
+      await sleep(MS_PAGE_DELAY_MS);
       if (res.firstErr) msDebug.errors.push('positiveOnly: ' + res.firstErr);
       else msDebug.errors.push('positiveOnly вернул пусто — полный проход');
       res = await runByStore('');
