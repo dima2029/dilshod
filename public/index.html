@@ -1534,6 +1534,14 @@ function startScan() {
             qrbox: (viewfinderWidth, viewfinderHeight) => {
                 const w = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.9);
                 return { width: w, height: Math.floor(w * 0.5) };
+            },
+            // По умолчанию браузер часто отдаёт невысокое разрешение видео — для QR хватает,
+            // а для штрихкода (мелкие узкие полоски) резко падает точность распознавания.
+            // Просим камеру честное HD-разрешение.
+            videoConstraints: {
+                facingMode: 'environment',
+                width: { ideal: 1920 },
+                height: { ideal: 1080 }
             }
         },
         onScanDecoded,
