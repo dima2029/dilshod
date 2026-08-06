@@ -38,13 +38,19 @@ const MS_PASSWORD = process.env.MOYSKLAD_PASSWORD;
 const MS_MATCH_FIELD = process.env.MOYSKLAD_MATCH_FIELD || 'article'; // article | code
 // Пауза между страницами пагинации при синхронизации — без неё все запросы одного
 // прохода улетают пачкой за секунды, и даже один нормальный цикл синхронизации может
-// кратковременно превысить лимит МойСклад (блокировки 1-2 авг и 4 авг 2026).
-// Официальный лимит для авторизации по логину/паролю или токену (письмо МойСклад
-// «Новые лимиты в JSON API», 4 авг 2026) — «корзинка» 45 запросов/3с, но с растущим
-// «весом» запроса: 2 с 12 мая 2026 (=22.5 запр/3с), 3 с 1 сен 2026 (=15 запр/3с),
-// 4 с 1 дек 2026 (=11.25 запр/3с). 300мс = ~3.3 запр/с — с запасом укладывается
-// даже в самый строгий лимит конца 2026 года, без необходимости менять значение позже.
+// кратковременно превысить лимит МойСклад (блокировки 1, 4 авг 2026).
+// Официальный лимит (dev.moysklad.ru/doc/api/remap/1.2/#/restrictions) — «корзинка»
+// 45 ЕДИНИЦ/3с, но разные эндпоинты списывают разный «вес» за один запрос:
+//  - /entity/assortment — вес 1 (стандартный, растёт по расписанию авторизации по
+//    логину/паролю: 2 с 12 мая 2026, 3 с 1 сен, 4 с 1 дек — т.е. минимум 11 запр/3с
+//    даже в конце года). 300мс = ~3.3 запр/с — с запасом на весь 2026 год.
+//  - /report/stock/bystore и /report/stock/all — вес ВСЕГДА 5, независимо от способа
+//    авторизации. Лимит для них = 45÷5 = 9 запросов/3с (~333мс минимум) — это
+//    отдельная, более жёсткая пауза, см. MS_BYSTORE_DELAY_MS ниже.
+// Также действует лимит «не более 200 запросов/мин с ошибкой 429 за последний час» —
+// именно он, а не «400/мин» из письма-уведомления, реально отключает доступ.
 const MS_PAGE_DELAY_MS = Number(process.env.MOYSKLAD_PAGE_DELAY_MS) || 300;
+const MS_BYSTORE_DELAY_MS = Number(process.env.MOYSKLAD_BYSTORE_DELAY_MS) || 600;
 
 // Colin's (365trends.tj) — публичный API (витрина), токен не нужен
 const COLINS_API_URL = process.env.COLINS_API_URL || 'https://api.365trends.tj/api/products/sidebar-filter';
@@ -299,7 +305,7 @@ app.get('/api/moysklad', (req, res) => {
 // Диагностика последней синхронизации МойСклад — без этого при повторной блокировке
 // API приходится гадать, что именно пошло не так (см. блокировки 1, 4 авг 2026).
 app.get('/api/moysklad/debug', (req, res) => {
-  res.json({ sync: msSyncState, pageDelayMs: MS_PAGE_DELAY_MS, ...msDebug });
+  res.json({ sync: msSyncState, pageDelayMs: MS_PAGE_DELAY_MS, bystoreDelayMs: MS_BYSTORE_DELAY_MS, ...msDebug });
 });
 
 // Ручной запуск синхронизации Colin's, не дожидаясь плановых 20 минут (например, сразу
@@ -950,7 +956,7 @@ async function msSyncAllInner(auth) {
     const maxPages = Math.ceil(info.size / 1000) + 5; // страховка от «бесконечной» пагинации
     const q = mode ? `&stockMode=${mode}` : '';
     for (let p = 0; p < maxPages; p++) {
-      if (p > 0) await sleep(MS_PAGE_DELAY_MS);
+      if (p > 0) await sleep(MS_BYSTORE_DELAY_MS); // вес этого эндпоинта = 5 единиц — своя, более строгая пауза
       const r = await msFetch(`${MS_API}/report/stock/bystore?limit=1000&offset=${offset}${q}`, { headers });
       if (!r.ok) {
         const b = await r.text().catch(() => '');
@@ -991,7 +997,7 @@ async function msSyncAllInner(auth) {
       msDebug.errors.push('positiveOnly: ' + res.firstErr + ' — пропускаю резервный проход в этом цикле');
     } else if (res.matched === 0) {
       msDebug.errors.push('positiveOnly вернул пусто — полный проход');
-      await sleep(MS_PAGE_DELAY_MS);
+      await sleep(MS_BYSTORE_DELAY_MS);
       res = await runByStore('');
       if (res.firstErr) msDebug.errors.push(res.firstErr);
     }
