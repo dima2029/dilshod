@@ -296,6 +296,12 @@ app.get('/api/moysklad', (req, res) => {
   res.json({ updatedAt: msPublic.updatedAt, sync: msSyncState, stores: msPublic.stores, count: msPublic.count, rows: msPublic.rows });
 });
 
+// Диагностика последней синхронизации МойСклад — без этого при повторной блокировке
+// API приходится гадать, что именно пошло не так (см. блокировки 1, 4 авг 2026).
+app.get('/api/moysklad/debug', (req, res) => {
+  res.json({ sync: msSyncState, pageDelayMs: MS_PAGE_DELAY_MS, ...msDebug });
+});
+
 // Ручной запуск синхронизации Colin's, не дожидаясь плановых 20 минут (например, сразу
 // после деплоя, чтобы проверить результат). colinsSyncAll() сам не даёт запустить
 // вторую синхронизацию, пока идёт текущая, так что повторные вызовы безопасны.
@@ -974,13 +980,18 @@ async function msSyncAllInner(auth) {
 
   let matched = 0;
   try {
-    // Быстрый проход только по позициям с остатком; если параметр не сработал
-    // (ошибка ИЛИ пустой ответ) — надёжный полный проход по всему ассортименту.
+    // Быстрый проход только по позициям с остатком; полный проход по всему
+    // ассортименту — тяжёлый (см. комментарий выше), включаем его резервом ТОЛЬКО
+    // если positiveOnly сам отработал, но вернул пусто (похоже, режим не поддержан).
+    // Если же positiveOnly упал с ошибкой (429/403 — признак лимита/блокировки API) —
+    // НЕ включаем тяжёлый резерв поверх уже проблемного запроса, просто пропускаем
+    // раскладку по складам в этом цикле и пробуем на следующем плановом проходе.
     let res = await runByStore('positiveOnly');
-    if (res.firstErr || res.matched === 0) {
+    if (res.firstErr) {
+      msDebug.errors.push('positiveOnly: ' + res.firstErr + ' — пропускаю резервный проход в этом цикле');
+    } else if (res.matched === 0) {
+      msDebug.errors.push('positiveOnly вернул пусто — полный проход');
       await sleep(MS_PAGE_DELAY_MS);
-      if (res.firstErr) msDebug.errors.push('positiveOnly: ' + res.firstErr);
-      else msDebug.errors.push('positiveOnly вернул пусто — полный проход');
       res = await runByStore('');
       if (res.firstErr) msDebug.errors.push(res.firstErr);
     }
