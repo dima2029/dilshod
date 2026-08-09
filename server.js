@@ -437,6 +437,9 @@ app.get('/api/moysklad/debug', (req, res) => {
   }
   res.json({
     configured: msConfigured(),
+    // Чем реально авторизуется бот: 'token' (Bearer) в приоритете, иначе 'login', иначе 'none'.
+    // Помогает убедиться, что перешли именно на токен, а не молча остались на логине/пароле.
+    authMode: MS_TOKEN ? 'token' : ((MS_LOGIN && MS_PASSWORD) ? 'login' : 'none'),
     updatedAt: msCatalog.updatedAt,
     sync: msSyncState,
     models: msModels.size,
