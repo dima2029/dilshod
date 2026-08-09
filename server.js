@@ -6,7 +6,8 @@ const {
   modelKey, colorFromName, sizeFromName, msPrice,
   parseStoreRenameMap, makeStoreDisplay,
   serializeMsSnapshot, deserializeMsSnapshot, isMsCacheStale,
-  parseBarcodes, buildBarcodeIndex
+  parseBarcodes, buildBarcodeIndex,
+  sumByStore, cloneCatalogForStockRefresh, applyStockByStoreRow
 } = require('./lib/moysklad-parse');
 const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks, splitCompoundArticle, looksLikeBulkPlace } = require('./lib/warehouse-place');
 const { buildColinsCatalog } = require('./lib/colins-parse');
@@ -880,9 +881,7 @@ async function msSyncAllInner(auth, { full = false } = {}) {
   // «Только остатки» — берём КОПИЮ прошлого каталога (названия/цены/штрихкоды не трогаем),
   // с обнулёнными остатками: заполним их свежими из bystore. Копия, а не сам msInfoAll —
   // чтобы при сбое bystore живой каталог/поиск не обнулился (замена атомарна в rebuild()).
-  const info = doFull ? new Map() : new Map(
-    [...msInfoAll.entries()].map(([id, inf]) => [id, { ...inf, byStore: {}, totalStock: 0 }])
-  ); // id -> инфо
+  const info = doFull ? new Map() : cloneCatalogForStockRefresh(msInfoAll); // id -> инфо
 
   // Построить модели -> цвета -> размеры из info и опубликовать в глобальные переменные.
   // Вызывается дважды: после ассортимента (видны итоги) и после раскладки по складам (видны колонки).
@@ -1019,16 +1018,7 @@ async function msSyncAllInner(auth, { full = false } = {}) {
       const rows = data.rows || [];
       if (!rows.length) break;
       for (const row of rows) {
-        const id = String(row.meta && row.meta.href || '').split('?')[0].split('/').pop();
-        const inf = info.get(id);
-        if (!inf) continue;
-        matched++;
-        for (const sb of (row.stockByStore || [])) {
-          const sName = sb.name || '';
-          if (!sName || MS_SKIP_STORES.includes(sName.toLowerCase())) continue;
-          const st = Number(sb.stock) || 0;
-          if (st > 0) { const disp = storeDisplay(sName); inf.byStore[disp] = (inf.byStore[disp] || 0) + st; }
-        }
+        if (applyStockByStoreRow(info, row, { skipStores: MS_SKIP_STORES, storeDisplay })) matched++;
       }
       offset += rows.length;
     }
@@ -1059,10 +1049,7 @@ async function msSyncAllInner(auth, { full = false } = {}) {
   // В режиме «только остатки» Итого берём из суммы по складам (ассортимент не тянули,
   // его totalStock устарел бы). В полном проходе totalStock уже задан из ассортимента.
   if (!doFull) {
-    for (const inf of info.values()) {
-      let t = 0; for (const k in inf.byStore) t += inf.byStore[k];
-      inf.totalStock = t;
-    }
+    for (const inf of info.values()) inf.totalStock = sumByStore(inf.byStore);
   }
 
   // 3) финальная пересборка — теперь с раскладкой по складам (byStore)
