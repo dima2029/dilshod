@@ -311,9 +311,30 @@ app.get('/api/moysklad', (req, res) => {
 // Диагностика последней синхронизации МойСклад — без этого при повторной блокировке
 // API приходится гадать, что именно пошло не так (см. блокировки 1, 4 авг 2026).
 app.get('/api/moysklad/debug', (req, res) => {
+  // Диагностика по конкретному артикулу: найден ли он в каталоге и как разложен по складам.
+  const art = String(req.query.article || '').trim().toUpperCase();
+  if (art) {
+    const hits = [];
+    for (const [id, inf] of msInfoAll) {
+      if ((inf.variantArticle || '').toUpperCase().includes(art) ||
+          inf.baseU.includes(art) || (inf.model || '').toUpperCase().includes(art)) {
+        hits.push({ id, base: inf.base, size: inf.size, variantArticle: inf.variantArticle, byStore: inf.byStore });
+        if (hits.length >= 40) break;
+      }
+    }
+    return res.json({ article: art, foundInInfo: hits.length, hits });
+  }
   // authMode: чем реально авторизуется бот — 'token' (Bearer, приоритет), иначе 'login', иначе 'none'.
   const authMode = MS_TOKEN ? 'token' : ((MS_LOGIN && MS_PASSWORD) ? 'login' : 'none');
-  res.json({ authMode, sync: msSyncState, pageDelayMs: MS_PAGE_DELAY_MS, bystoreDelayMs: MS_BYSTORE_DELAY_MS, ...msDebug });
+  res.json({
+    configured: msConfigured(), authMode,
+    updatedAt: msCatalog.updatedAt,
+    sync: msSyncState,
+    models: msModels.size, infoAll: msInfoAll ? msInfoAll.size : 0,
+    storeNames: msStoreNames,
+    pageDelayMs: MS_PAGE_DELAY_MS, bystoreDelayMs: MS_BYSTORE_DELAY_MS,
+    ...msDebug
+  });
 });
 
 // Ручной запуск синхронизации Colin's, не дожидаясь плановых 20 минут (например, сразу
@@ -421,34 +442,6 @@ app.get('/api/moysklad/find', (req, res) => {
     }
   }
   res.json({ stores: msStoreNames.length ? msStoreNames : ['Всего'], rows: groupInfos(matched) });
-});
-
-// Диагностика синхронизации (что пошло не так)
-app.get('/api/moysklad/debug', (req, res) => {
-  const art = String(req.query.article || '').trim().toUpperCase();
-  if (art) {
-    const hits = [];
-    for (const [id, inf] of msInfoAll) {
-      if ((inf.variantArticle || '').toUpperCase().includes(art) ||
-          inf.baseU.includes(art) || (inf.model || '').toUpperCase().includes(art)) {
-        hits.push({ id, base: inf.base, size: inf.size, variantArticle: inf.variantArticle, byStore: inf.byStore });
-        if (hits.length >= 40) break;
-      }
-    }
-    return res.json({ article: art, foundInInfo: hits.length, hits });
-  }
-  res.json({
-    configured: msConfigured(),
-    // Чем реально авторизуется бот: 'token' (Bearer) в приоритете, иначе 'login', иначе 'none'.
-    // Помогает убедиться, что перешли именно на токен, а не молча остались на логине/пароле.
-    authMode: MS_TOKEN ? 'token' : ((MS_LOGIN && MS_PASSWORD) ? 'login' : 'none'),
-    updatedAt: msCatalog.updatedAt,
-    sync: msSyncState,
-    models: msModels.size,
-    infoAll: msInfoAll ? msInfoAll.size : 0,
-    storeNames: msStoreNames,
-    debug: msDebug
-  });
 });
 
 // ======================================================================
