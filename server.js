@@ -51,6 +51,11 @@ const MS_MATCH_FIELD = process.env.MOYSKLAD_MATCH_FIELD || 'article'; // article
 // именно он, а не «400/мин» из письма-уведомления, реально отключает доступ.
 const MS_PAGE_DELAY_MS = Number(process.env.MOYSKLAD_PAGE_DELAY_MS) || 300;
 const MS_BYSTORE_DELAY_MS = Number(process.env.MOYSKLAD_BYSTORE_DELAY_MS) || 600;
+// Как часто гонять полную синхронизацию каталога. Каждый цикл тянет весь ассортимент
+// (~37 стр.) + тяжёлую раскладку bystore (вес 5) — это основной источник запросов к
+// МойСкладу. Реже цикл = меньше запросов = меньше риск блокировки за «много запросов».
+// По умолчанию 30 мин; при блокировках можно поднять до 60 через переменную в Railway.
+const MS_SYNC_INTERVAL_MS = Math.max(5, Number(process.env.MOYSKLAD_SYNC_INTERVAL_MIN) || 30) * 60 * 1000;
 
 // Colin's (365trends.tj) — публичный API (витрина), токен не нужен
 const COLINS_API_URL = process.env.COLINS_API_URL || 'https://api.365trends.tj/api/products/sidebar-filter';
@@ -944,9 +949,20 @@ async function msSyncAllInner(auth) {
     msBarcodeMap = buildBarcodeIndex(info.values());
   } catch (e) { msDebug.errors.push('assortment ' + e.message); }
 
-  // Итоги видны сразу (вкладка «Остатки» с общими остатками), не дожидаясь раскладки по складам
-  rebuild();
-  console.log(`🔄 МойСклад: ассортимент ${info.size}, моделей ${msModels.size} — итоги опубликованы, идёт раскладка по складам…`);
+  // Ранняя публикация (после ассортимента, но ДО раскладки по складам) — только на
+  // «холодном» старте, когда каталога ещё нет вообще. В этот момент byStore пустой,
+  // поэтому колонки складов (Овир/Ашан/…) = 0. Если опубликовать это поверх уже
+  // готового каталога, то на все ~7 минут тяжёлой раскладки bystore на экране будет
+  // «Итого верное, а склады по нулям» — ровно тот баг, что ловили в отчёте бота.
+  // Каталог и так восстанавливается из Postgres при старте, так что почти всегда
+  // msModels уже заполнен — в этом случае оставляем на экране прошлый ПОЛНЫЙ каталог
+  // (с колонками) и заменяем его финальным rebuild() уже с раскладкой по складам.
+  if (msModels.size === 0) {
+    rebuild();
+    console.log(`🔄 МойСклад: ассортимент ${info.size}, моделей ${msModels.size} — холодный старт, итоги опубликованы, идёт раскладка по складам…`);
+  } else {
+    console.log(`🔄 МойСклад: ассортимент ${info.size} — идёт раскладка по складам, до её готовности показываю прошлый каталог с колонками…`);
+  }
 
   // 2) /report/stock/bystore — раскладка по складам (join по id модификации).
   //    stockMode=positiveOnly резко уменьшает выборку (только позиции с остатком > 0) —
@@ -1605,7 +1621,8 @@ initDB().then(async () => {
     } else {
       console.log(`ℹ️ МойСклад: кэш ещё свежий (обновлён ${msCatalog.updatedAt}) — жду планового обновления`);
     }
-    setInterval(() => msSyncAll().catch(e => console.error('ms sync', e.message)), 20 * 60 * 1000);
+    console.log(`⏱️ МойСклад: синхронизация каждые ${MS_SYNC_INTERVAL_MS / 60000} мин`);
+    setInterval(() => msSyncAll().catch(e => console.error('ms sync', e.message)), MS_SYNC_INTERVAL_MS);
   } else {
     console.log('ℹ️ Синхронизация МойСклад выключена (нет доступа)');
   }
