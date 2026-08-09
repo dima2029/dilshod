@@ -311,7 +311,9 @@ app.get('/api/moysklad', (req, res) => {
 // Диагностика последней синхронизации МойСклад — без этого при повторной блокировке
 // API приходится гадать, что именно пошло не так (см. блокировки 1, 4 авг 2026).
 app.get('/api/moysklad/debug', (req, res) => {
-  res.json({ sync: msSyncState, pageDelayMs: MS_PAGE_DELAY_MS, bystoreDelayMs: MS_BYSTORE_DELAY_MS, ...msDebug });
+  // authMode: чем реально авторизуется бот — 'token' (Bearer, приоритет), иначе 'login', иначе 'none'.
+  const authMode = MS_TOKEN ? 'token' : ((MS_LOGIN && MS_PASSWORD) ? 'login' : 'none');
+  res.json({ authMode, sync: msSyncState, pageDelayMs: MS_PAGE_DELAY_MS, bystoreDelayMs: MS_BYSTORE_DELAY_MS, ...msDebug });
 });
 
 // Ручной запуск синхронизации Colin's, не дожидаясь плановых 20 минут (например, сразу
