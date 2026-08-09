@@ -556,6 +556,7 @@
                     <span class="card-title">📊 Остатки из МойСклад</span>
                     <div class="card-actions">
                         <button class="btn-outline" onclick="loadMoysklad(true)">🔄 Обновить</button>
+                        <button class="btn-outline green" onclick="resyncFull(this)" title="Тянет весь каталог из МойСклада — жми только когда пришёл новый товар">📦 Новый приход</button>
                     </div>
                 </div>
                 <div class="info-box" id="msInfo">Загрузка каталога…</div>
@@ -881,6 +882,27 @@ let msData = { updatedAt: null, stores: [], rows: [] };
 
 function escHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+}
+
+// «Новый приход» — ручной полный пересбор каталога из МойСклада (названия/цены/новые
+// артикулы). Обычные обновления тянут только остатки, поэтому это отдельная кнопка —
+// жать её нужно только когда реально пришёл новый товар. Занимает несколько минут.
+async function resyncFull(btn) {
+    if (!confirm('Обновить весь каталог из МойСклада?\n\nНужно только когда пришёл НОВЫЙ товар. Займёт несколько минут — остатки обновляются и без этого.')) return;
+    const info = document.getElementById('msInfo');
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Запускаю…'; }
+        const r = await fetch('/api/moysklad/resync-full', { method: 'POST' });
+        const d = await r.json();
+        if (d.error) { if (info) info.textContent = '❌ ' + d.error; }
+        else if (d.already) { if (info) info.textContent = '⏳ Обновление каталога уже идёт — подождите…'; }
+        else { if (info) info.textContent = '📦 Обновление каталога запущено — займёт несколько минут. Новые товары появятся автоматически.'; }
+    } catch (e) {
+        if (info) info.textContent = '❌ Не удалось запустить: ' + e.message;
+    } finally {
+        setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = '📦 Новый приход'; } }, 4000);
+        loadMoysklad(true);
+    }
 }
 
 let _msRenderedKey = null;

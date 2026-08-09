@@ -321,6 +321,17 @@ app.post('/api/colins/resync', (req, res) => {
   res.json({ started: true, sync: colinsSyncState });
 });
 
+// Ручной ПОЛНЫЙ пересбор каталога МойСклад — кнопка «Новый приход» на сайте. Тянет весь
+// ассортимент (названия/цены/штрихкоды/новые артикулы) — самый тяжёлый запрос к API.
+// Плановые циклы обновляют ТОЛЬКО остатки, поэтому полный пересбор запускаем вручную,
+// когда реально пришёл новый товар — так резко меньше запросов к МойСкладу.
+app.post('/api/moysklad/resync-full', (req, res) => {
+  if (!msConfigured()) return res.status(400).json({ error: 'МойСклад не настроен' });
+  if (msSyncState.status === 'running') return res.json({ started: false, already: true, sync: msSyncState });
+  msSyncAll({ full: true }).catch(e => console.error('ms resync-full', e.message));
+  res.json({ started: true, sync: msSyncState });
+});
+
 // Каталог Colin's (365trends.tj) — модель -> цвета -> размеры, только остаток > 0.
 app.get('/api/colins', (req, res) => {
   res.json({
@@ -832,14 +843,14 @@ async function msFetchStores() {
 
 let msDebug = { lastRun: null, storesFetched: [], perStore: [], errors: [] };
 
-async function msSyncAll() {
+async function msSyncAll(opts = {}) {
   const auth = msAuthHeader();
   if (!auth) { msSyncState = { status: 'error', startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), lastError: 'МойСклад не настроен: нет MOYSKLAD_TOKEN или MOYSKLAD_LOGIN/MOYSKLAD_PASSWORD в Railway' }; return; }
   if (msSyncState.status === 'running') { console.log('⏳ МойСклад: синхронизация уже идёт, пропускаю запуск'); return; }
-  msSyncState = { status: 'running', startedAt: new Date().toISOString(), finishedAt: null, lastError: null };
+  msSyncState = { status: 'running', startedAt: new Date().toISOString(), finishedAt: null, lastError: null, mode: opts.full ? 'full' : 'stock-only' };
   await recordSyncAttempt('moysklad');
   try {
-    await msSyncAllInner(auth);
+    await msSyncAllInner(auth, opts);
     msSyncState.status = 'done';
   } catch (e) {
     msSyncState.status = 'error';
@@ -850,14 +861,28 @@ async function msSyncAll() {
   }
 }
 
-async function msSyncAllInner(auth) {
-  msDebug = { lastRun: new Date().toISOString(), storesFetched: [], perStore: [], errors: [] };
-  await msFetchStores();
-  msDebug.storesFetched = msStores.map(s => s.name);
+async function msSyncAllInner(auth, { full = false } = {}) {
+  // На «холодном» старте (каталога в памяти ещё нет) полный проход обязателен — даже
+  // если попросили только остатки, брать их не к чему привязывать.
+  const doFull = full || msInfoAll.size === 0;
+  msDebug = { lastRun: new Date().toISOString(), mode: doFull ? 'full' : 'stock-only', storesFetched: [], perStore: [], errors: [] };
   const headers = { 'Authorization': auth, 'Accept': 'application/json;charset=utf-8' };
-  const stores = msStores.length ? msStores : [{ id: null, name: 'Всего' }];
 
-  const info = new Map(); // id -> инфо
+  // Список складов освежаем только при полном проходе (это тоже запрос к API). В режиме
+  // «только остатки» переиспользуем прошлый список — склады меняются крайне редко.
+  if (doFull) await msFetchStores();
+  msDebug.storesFetched = msStores.map(s => s.name);
+  const stores = msStores.length ? msStores
+    : (msStoreNames.length ? msStoreNames.map(n => ({ id: null, name: n, display: n }))
+      : [{ id: null, name: 'Всего' }]);
+
+  // Полный проход — строим каталог заново из ассортимента.
+  // «Только остатки» — берём КОПИЮ прошлого каталога (названия/цены/штрихкоды не трогаем),
+  // с обнулёнными остатками: заполним их свежими из bystore. Копия, а не сам msInfoAll —
+  // чтобы при сбое bystore живой каталог/поиск не обнулился (замена атомарна в rebuild()).
+  const info = doFull ? new Map() : new Map(
+    [...msInfoAll.entries()].map(([id, inf]) => [id, { ...inf, byStore: {}, totalStock: 0 }])
+  ); // id -> инфо
 
   // Построить модели -> цвета -> размеры из info и опубликовать в глобальные переменные.
   // Вызывается дважды: после ассортимента (видны итоги) и после раскладки по складам (видны колонки).
@@ -916,9 +941,12 @@ async function msSyncAllInner(auth) {
     saveMsCache(); // фоново, не блокирует — переживёт следующий рестарт сервера
   }
 
-  // 1) Полный ассортимент (товары + модификации). Остаток лежит на МОДИФИКАЦИЯХ
-  //    (у товара с модификациями stock = 0). База модификации берётся из НАЗВАНИЯ,
-  //    т.к. code у модификации = штрихкод.
+  // 1) Полный ассортимент (товары + модификации) — ТОЛЬКО в полном проходе (кнопка
+  //    «Новый приход» или холодный старт). Самый тяжёлый запрос; в обычном цикле «только
+  //    остатки» его НЕ делаем — названия/цены/штрихкоды берём из кэша.
+  //    Остаток лежит на МОДИФИКАЦИЯХ (у товара с модификациями stock = 0). База
+  //    модификации берётся из НАЗВАНИЯ, т.к. code у модификации = штрихкод.
+  if (doFull) {
   try {
     let offset = 0;
     for (let page = 0; page < 400; page++) {
@@ -959,9 +987,16 @@ async function msSyncAllInner(auth) {
   // (с колонками) и заменяем его финальным rebuild() уже с раскладкой по складам.
   if (msModels.size === 0) {
     rebuild();
-    console.log(`🔄 МойСклад: ассортимент ${info.size}, моделей ${msModels.size} — холодный старт, итоги опубликованы, идёт раскладка по складам…`);
+    console.log(`🔄 МойСклад [full]: ассортимент ${info.size} — холодный старт, итоги опубликованы, идёт раскладка по складам…`);
   } else {
-    console.log(`🔄 МойСклад: ассортимент ${info.size} — идёт раскладка по складам, до её готовности показываю прошлый каталог с колонками…`);
+    console.log(`🔄 МойСклад [full]: ассортимент ${info.size} — идёт раскладка по складам, до её готовности показываю прошлый каталог…`);
+  }
+  } else {
+    // Обычный цикл «только остатки»: каталог уже в info (копия из кэша) с обнулёнными
+    // остатками — распроданные позиции уйдут в 0 (positiveOnly их не вернёт), затем
+    // bystore зальёт свежие. Ассортимент не трогаем.
+    msDebug.infoCount = info.size;
+    console.log(`🔄 МойСклад [stock-only]: каталог из кэша (${info.size} поз.) — тяну только остатки bystore…`);
   }
 
   // 2) /report/stock/bystore — раскладка по складам (join по id модификации).
@@ -1021,9 +1056,18 @@ async function msSyncAllInner(auth) {
     msDebug.bystoreMatched = matched;
   } catch (e) { msDebug.errors.push('bystore ' + e.message); }
 
+  // В режиме «только остатки» Итого берём из суммы по складам (ассортимент не тянули,
+  // его totalStock устарел бы). В полном проходе totalStock уже задан из ассортимента.
+  if (!doFull) {
+    for (const inf of info.values()) {
+      let t = 0; for (const k in inf.byStore) t += inf.byStore[k];
+      inf.totalStock = t;
+    }
+  }
+
   // 3) финальная пересборка — теперь с раскладкой по складам (byStore)
   rebuild();
-  console.log(`🔄 МойСклад готов: складов ${msStoreNames.length}, моделей ${msModels.size}, раскладка по ${matched} позициям`);
+  console.log(`🔄 МойСклад готов [${doFull ? 'full' : 'stock-only'}]: складов ${msStoreNames.length}, моделей ${msModels.size}, раскладка по ${matched} позициям`);
 }
 
 // ======================================================================
