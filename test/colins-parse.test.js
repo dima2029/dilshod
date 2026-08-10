@@ -1,6 +1,44 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { compareSizes, buildColinsCatalog } = require('../lib/colins-parse');
+const { compareSizes, buildColinsCatalog, mergeRawItemsByArticle } = require('../lib/colins-parse');
+
+// --- mergeRawItemsByArticle: витрина отдаёт по строке на цвет ---
+test('mergeRawItemsByArticle: объединяет строки одного артикула во все цвета', () => {
+  const rows = [
+    { article: 'CL1', title: 'Футболка', colors: [{ name: 'Синий', sizes: [{ value: 'L', quantity: 5 }] }] },
+    { article: 'CL1', title: 'Футболка', colors: [{ name: 'Красный', sizes: [{ value: 'M', quantity: 2 }] }] },
+    { article: 'CL2', title: 'Шапка', colors: [{ name: 'STND', sizes: [{ value: 'STND', quantity: 1 }] }] },
+  ];
+  const merged = mergeRawItemsByArticle(rows);
+  assert.equal(merged.length, 2, 'два уникальных артикула');
+  const cl1 = merged.find(m => m.article === 'CL1');
+  assert.equal(cl1.colors.length, 2, 'оба цвета сохранены');
+  assert.deepEqual(cl1.colors.map(c => c.name).sort(), ['Красный', 'Синий']);
+  assert.equal(cl1.title, 'Футболка');
+});
+test('mergeRawItemsByArticle: дедуплицирует одинаковый цвет (регистр/пробелы)', () => {
+  const rows = [
+    { article: 'CL1', colors: [{ name: 'Синий', sizes: [{ value: 'L', quantity: 5 }] }] },
+    { article: 'CL1', colors: [{ name: ' синий ', sizes: [{ value: 'L', quantity: 9 }] }] },
+  ];
+  const merged = mergeRawItemsByArticle(rows);
+  assert.equal(merged[0].colors.length, 1, 'дубль цвета не добавлен');
+});
+test('mergeRawItemsByArticle: пустой/битый вход безопасен', () => {
+  assert.deepEqual(mergeRawItemsByArticle([]), []);
+  assert.deepEqual(mergeRawItemsByArticle(null), []);
+  assert.deepEqual(mergeRawItemsByArticle([{ title: 'без артикула' }, null]), []);
+});
+test('mergeRawItemsByArticle → buildColinsCatalog: все цвета в наличии видны', () => {
+  const rows = [
+    { article: 'CL1', title: 'Футболка', colors: [{ name: 'Синий', price: 100, sizes: [{ value: 'L', quantity: 5 }] }] },
+    { article: 'CL1', title: 'Футболка', colors: [{ name: 'Красный', price: 100, sizes: [{ value: 'M', quantity: 2 }] }] },
+  ];
+  const cat = buildColinsCatalog(mergeRawItemsByArticle(rows));
+  assert.equal(cat.length, 1, 'одна модель');
+  assert.equal(cat[0].colors.length, 2, 'оба цвета показаны (без merge был бы один)');
+  assert.equal(cat[0].stock, 7, 'остаток суммируется по обоим цветам');
+});
 
 test('compareSizes: буквенные размеры одежды идут по стандартному порядку', () => {
   const sizes = ['L', 'XS', 'M', 'S', 'XL'];

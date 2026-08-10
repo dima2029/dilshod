@@ -10,7 +10,7 @@ const {
   sumByStore, cloneCatalogForStockRefresh, applyStockByStoreRow
 } = require('./lib/moysklad-parse');
 const { OVIR_FLOOR_BY_LETTER, parseBulkPlaceBlocks, splitCompoundArticle, looksLikeBulkPlace } = require('./lib/warehouse-place');
-const { buildColinsCatalog } = require('./lib/colins-parse');
+const { buildColinsCatalog, mergeRawItemsByArticle } = require('./lib/colins-parse');
 const { mapDashboardProductToRawItem } = require('./lib/colins-dashboard');
 const { encodeCellCode, decodeCellCode, isCellCode } = require('./lib/cell-qr');
 
@@ -365,7 +365,8 @@ app.get('/api/colins', (req, res) => {
     rows: colinsPublic.rows,
     dashboard: {
       configured: Boolean(COLINS_DASHBOARD_USERNAME && COLINS_DASHBOARD_PASSWORD),
-      lastError: colinsDashboardLastError
+      lastError: colinsDashboardLastError,
+      stats: colinsDashboardStats
     }
   });
 });
@@ -622,6 +623,7 @@ async function colinsSyncAll() {
 // потому что сама синхронизация в целом при этом всё равно завершается успешно
 // (падаем обратно на публичный API), и общий lastError её не увидит.
 let colinsDashboardLastError = null;
+let colinsDashboardStats = null; // { failed, backfilled, at } — сколько деталей не пришло и сколько добрано из витрины
 
 async function colinsSyncAllInner() {
   let raw = null;
@@ -668,7 +670,8 @@ async function colinsFetchPublicAll() {
     if (!items.length) break;
     raw.push(...items);
   }
-  return raw;
+  // Витрина отдаёт по строке на цвет — объединяем цвета по артикулу, иначе теряются.
+  return mergeRawItemsByArticle(raw);
 }
 
 // ---- Полная выгрузка из закрытой админ-панели (Dashboard-Products) ----
@@ -762,17 +765,44 @@ async function colinsDashboardFetchAll() {
     list.push(...items);
   }
 
+  // Детали товара тянем с РЕТРАЯМИ: раньше при любом сбое (таймаут/429/5xx) товар молча
+  // выбрасывался (return null → .filter(Boolean)), и из-за этого каждый синк терял часть
+  // товаров. Теперь 3 попытки с нарастающей паузой; на 4xx (кроме 429) ретрай бессмыслен.
+  let failed = 0;
   const details = await colinsMapWithConcurrency(list, COLINS_DASHBOARD_CONCURRENCY, async (item) => {
-    try {
-      const r = await colinsFetch(`${COLINS_DASHBOARD_API_URL}/api/dashboard/products/${item.id}`, { headers: authHeaders }, 20000);
-      if (!r.ok) return null;
-      return await r.json();
-    } catch (e) {
-      return null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await colinsFetch(`${COLINS_DASHBOARD_API_URL}/api/dashboard/products/${item.id}`, { headers: authHeaders }, 20000);
+        if (r.ok) return await r.json();
+        if (r.status !== 429 && r.status < 500) break; // не 429 и не 5xx — повторять смысла нет
+      } catch (e) { /* сеть/таймаут — повторим */ }
+      await sleep(400 * (attempt + 1));
     }
+    failed++;
+    return null;
   });
 
-  return details.filter(Boolean).map(mapDashboardProductToRawItem);
+  let raw = details.filter(Boolean).map(mapDashboardProductToRawItem);
+
+  // Бэкфилл: то, что админка так и не отдала, добираем из публичной витрины — там остатки
+  // по размерам уже есть. Гарантирует, что опубликованный товар в наличии не пропадёт из-за
+  // одного сбойного запроса. Витрина уже объединена по артикулу (mergeRawItemsByArticle).
+  let backfilled = 0;
+  if (failed > 0) {
+    try {
+      const vit = await colinsFetchPublicAll();
+      const have = new Set(raw.map(x => x.article));
+      for (const it of vit) {
+        if (it.article && !have.has(it.article)) { raw.push(it); have.add(it.article); backfilled++; }
+      }
+      console.warn(`⚠️ Colin's: детали не пришли по ${failed} товарам (после ретраев); добрано из витрины: ${backfilled}`);
+    } catch (e) {
+      console.error('Colin\'s: бэкфилл из витрины не удался:', e.message);
+    }
+  }
+  colinsDashboardStats = { failed, backfilled, at: new Date().toISOString() };
+
+  return raw;
 }
 
 async function saveColinsCache() {
