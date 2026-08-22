@@ -57,6 +57,12 @@ const MS_BYSTORE_DELAY_MS = Number(process.env.MOYSKLAD_BYSTORE_DELAY_MS) || 600
 // МойСкладу. Реже цикл = меньше запросов = меньше риск блокировки за «много запросов».
 // По умолчанию 30 мин; при блокировках можно поднять до 60 через переменную в Railway.
 const MS_SYNC_INTERVAL_MS = Math.max(5, Number(process.env.MOYSKLAD_SYNC_INTERVAL_MIN) || 30) * 60 * 1000;
+// Главный рубильник обращений к API МойСклада. MOYSKLAD_SYNC_ENABLED=false ПОЛНОСТЬЮ
+// выключает любые сетевые запросы к МойСкладу (плановый синк, ручной «Новый приход»,
+// разовый fetchStock при промахе кэша). Бот продолжает отдавать ПОСЛЕДНИЙ каталог из
+// кэша (Postgres) — остатки просто перестают обновляться. Нужно, когда лимит/доступ к
+// API временно бережём под другой проект. Значение по умолчанию — включено.
+const MS_SYNC_ENABLED = String(process.env.MOYSKLAD_SYNC_ENABLED ?? 'true').trim().toLowerCase() !== 'false';
 
 // Colin's (365trends.tj) — публичный API (витрина), токен не нужен
 const COLINS_API_URL = process.env.COLINS_API_URL || 'https://api.365trends.tj/api/products/sidebar-filter';
@@ -328,6 +334,7 @@ app.get('/api/moysklad/debug', (req, res) => {
   const authMode = MS_TOKEN ? 'token' : ((MS_LOGIN && MS_PASSWORD) ? 'login' : 'none');
   res.json({
     configured: msConfigured(), authMode,
+    syncEnabled: MS_SYNC_ENABLED, // false = обращения к API МойСклада временно отключены (отдаём кэш)
     updatedAt: msCatalog.updatedAt,
     sync: msSyncState,
     models: msModels.size, infoAll: msInfoAll ? msInfoAll.size : 0,
@@ -350,6 +357,7 @@ app.post('/api/colins/resync', (req, res) => {
 // Плановые циклы обновляют ТОЛЬКО остатки, поэтому полный пересбор запускаем вручную,
 // когда реально пришёл новый товар — так резко меньше запросов к МойСкладу.
 app.post('/api/moysklad/resync-full', (req, res) => {
+  if (!MS_SYNC_ENABLED) return res.status(409).json({ error: 'Обновление из МойСклада временно отключено (MOYSKLAD_SYNC_ENABLED=false)' });
   if (!msConfigured()) return res.status(400).json({ error: 'МойСклад не настроен' });
   if (msSyncState.status === 'running') return res.json({ started: false, already: true, sync: msSyncState });
   msSyncAll({ full: true }).catch(e => console.error('ms resync-full', e.message));
@@ -476,6 +484,7 @@ let msSyncState = { status: 'idle', startedAt: null, finishedAt: null, lastError
 
 // Возвращает { name, article, stock, reserve, inTransit, quantity, price } или null
 async function fetchStock(article) {
+  if (!MS_SYNC_ENABLED) return null; // API временно отключён — работаем только по кэшу, без сетевых запросов
   const auth = msAuthHeader();
   if (!auth) throw new Error('МойСклад не настроен (нет токена или логина/пароля)');
 
@@ -873,6 +882,11 @@ async function msFetchStores() {
 let msDebug = { lastRun: null, storesFetched: [], perStore: [], errors: [] };
 
 async function msSyncAll(opts = {}) {
+  if (!MS_SYNC_ENABLED) {
+    console.log('⏸️ МойСклад: синхронизация ОТКЛЮЧЕНА (MOYSKLAD_SYNC_ENABLED=false) — запросов к API нет, отдаю кэш');
+    msSyncState = { status: 'disabled', startedAt: null, finishedAt: null, lastError: null };
+    return;
+  }
   const auth = msAuthHeader();
   if (!auth) { msSyncState = { status: 'error', startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), lastError: 'МойСклад не настроен: нет MOYSKLAD_TOKEN или MOYSKLAD_LOGIN/MOYSKLAD_PASSWORD в Railway' }; return; }
   if (msSyncState.status === 'running') { console.log('⏳ МойСклад: синхронизация уже идёт, пропускаю запуск'); return; }
@@ -1672,7 +1686,9 @@ initDB().then(async () => {
   // занимает несколько минут; если деплоить часто (несколько раз подряд), каждый
   // рестарт обрывал её на середине, и сайт вечно видел только частичные данные.
   // Раз кэш свежий — ждём планового обновления, а не запускаем ресинк заново.
-  if (msConfigured()) {
+  if (!MS_SYNC_ENABLED) {
+    console.log('⏸️ МойСклад: обращения к API ОТКЛЮЧЕНЫ (MOYSKLAD_SYNC_ENABLED=false) — плановый синк не запускается, отдаю кэш из Postgres');
+  } else if (msConfigured()) {
     if (await recentSyncAttempt('moysklad')) {
       console.log('ℹ️ МойСклад: попытка синхронизации уже была совсем недавно (другой процесс/деплой) — не запускаю сразу, жду планового обновления');
     } else if (isMsCacheStale(msCatalog.updatedAt)) {
